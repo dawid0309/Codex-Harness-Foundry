@@ -1,0 +1,10 @@
+node_modules/
+.next/
+dist/
+coverage/
+*.log
+data/runtime/
+AGENTS.md
+planning/AGENTS.md
+scripts/AGENTS.md
+src/AGENTS.md
