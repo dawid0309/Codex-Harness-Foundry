@@ -1,80 +1,147 @@
 # Codex Harness Foundry
 
-`Codex-Harness-Foundry` is a reusable repository scaffold for running Codex like a small product team instead of a single chat thread. It gives a new project shared agent context, a milestone-driven task board, branch conventions, and a repeatable verification gate.
+[![CI](https://github.com/dawid0309/Codex-Harness-Foundry/actions/workflows/ci.yml/badge.svg)](https://github.com/dawid0309/Codex-Harness-Foundry/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+[![Template Repository](https://img.shields.io/badge/template-ready-blue.svg)](https://github.com/dawid0309/Codex-Harness-Foundry/generate)
 
-For this repository itself, the source of truth for project identity lives in [`project.config.json`](./project.config.json). Forked projects can initialize their own name, goal, stack, and repository metadata with one command.
+**An open-source Codex workbench that helps AI code like a small product team, with repo-native context, milestone planning, task orchestration, and verification built in.**
 
-## What This Template Includes
+Chinese assist: a repo-native Codex workbench for long-running projects, with context, milestones, task orchestration, and verification built into the repository.
 
-- `agents-md/` sources for composing repo-aware `AGENTS.md` instructions
-- `planning/milestones.json` and `planning/task-board.json` for milestone and task orchestration
-- `scripts/lead-planner.ts` for refreshing and recommending the next ready task
-- `scripts/verify.ps1` as the standard verification gate
-- `docs/` templates for architecture notes, handoffs, reviews, and experiment logs
-- Git and branch conventions for milestone work and experiments
+- Codex usually works from chat memory. Codex Harness Foundry makes it work from repository truth.
+- Work moves through milestones, task cards, role boundaries, and verification instead of ad hoc prompting.
+- Use it when you need Codex to keep shipping across a real project, not just generate one-off code.
 
-## Who This Is For
+[Use this template](https://github.com/dawid0309/Codex-Harness-Foundry/generate) | [Quick Start](#quick-start) | [Fork and Initialize](./docs/runbooks/fork-and-init.md)
 
-Use this template when you want Codex to:
+## Problem And Why It Exists
 
-- start from repository truth instead of ad hoc chat memory
-- coordinate multiple roles such as planner, builder, and verifier
-- keep long-running work visible through milestones and task cards
-- preserve decisions, handoffs, and verification evidence inside the repo
+Typical AI coding workflows keep critical context in chat, not in the repository.
+
+- Context lives in chat history and ad hoc prompts.
+- Task state is implicit, fragile, or manually reconstructed.
+- Handoffs disappear once the conversation moves on.
+- Verification is optional, so "done" is hard to trust or replay.
+
+Codex Harness Foundry fixes that by storing context in repo files, advancing work through milestones and task cards, and enforcing a shared verify path.
+
+- Repo-native context from `project.config.json`, `AGENTS.md`, architecture docs, milestones, and the task board.
+- A planner -> builder -> verifier operating model with explicit ownership boundaries.
+- Persistent execution state through milestone blueprints, task cards, and next-task recommendation.
+- Verification as a first-class gate instead of a best-effort afterthought.
+
+## How It Works
+
+```mermaid
+flowchart LR
+    config["project.config.json"] --> init["pnpm init:project"]
+    init --> agents["agents-md -> AGENTS.md"]
+    init --> arch["docs/architecture/system.md"]
+    arch --> milestones["planning/milestones.json"]
+    milestones --> board["planning/task-board.json"]
+    agents --> verify["pnpm verify"]
+    board --> planner["planner / tasks scripts"]
+    planner --> verify
+    verify --> next["next task loop"]
+    next --> planner
+```
+
+Codex Harness Foundry turns a repo into an operating surface for Codex: configure the project, generate repo-aware instructions, refresh task state, verify the workflow, and keep moving from the next recommended task.
+
+## 30-Second Demo
+
+![Codex Harness Foundry terminal demo](./docs/assets/readme/codex-harness-foundry-demo.gif)
+
+Initialize a project, run verification, and get the next task from repo state. This is a repo-native workflow, not a chat screenshot.
+
+```powershell
+pnpm install
+pnpm init:project -- --name "Demo Product" --slug "demo-product" --goal "Ship a verifiable Codex workflow" --stack "Next.js, TypeScript, pnpm" --owner "your-github-user" --repoName "demo-product"
+pnpm verify
+pnpm planner:next
+```
+
+The asset is stored in [`docs/assets/readme/`](./docs/assets/readme/). Regeneration notes live in [docs/runbooks/readme-demo.md](./docs/runbooks/readme-demo.md).
 
 ## Quick Start
 
-1. Use GitHub's `Use this template` button or fork this repository.
+1. Use [this template](https://github.com/dawid0309/Codex-Harness-Foundry/generate) or fork the repository.
 2. Install dependencies:
 
 ```powershell
 pnpm install
 ```
 
-3. Initialize the fork with your own project identity:
+3. Initialize your project metadata:
 
 ```powershell
 pnpm init:project
 ```
 
-Or provide values directly:
-
-```powershell
-pnpm init:project -- --name "My Product" --slug "my-product" --goal "Ship a verifiable Codex workflow" --stack "Next.js, TypeScript, pnpm" --owner "your-github-user" --repoName "my-product"
-```
-
-4. Run the standard verification and bootstrap flow:
+4. Run the standard workflow bootstrap:
 
 ```powershell
 pnpm verify
+pnpm planner:next
 ```
 
-5. Use Codex against the repo with high-level prompts such as:
-   - `Continue the current milestone`
-   - `Open an experiment branch for this approach`
-   - `Summarize the verified tasks and propose the next slice`
+5. For deeper setup, follow the [fork and initialize runbook](./docs/runbooks/fork-and-init.md).
 
-## Daily Working Loop
+## Concrete Use Case
 
-The intended operating loop is:
+Imagine a solo builder or small team using Codex to push a 2-6 week product effort.
 
-`read AGENTS -> refresh task board -> pick highest-value ready task -> implement -> verify -> update handoff/task board -> continue`
+Before Foundry:
 
-The template is intentionally opinionated: it favors small verified slices, clear ownership boundaries, and a written trail of decisions.
+- Codex starts from chat memory instead of repository truth.
+- Planner, builder, and reviewer behavior blend together in one long thread.
+- Milestones, handoffs, and verification results are hard to preserve or replay.
 
-## Repository Layout
+With Foundry:
 
-```text
-agents/          Role briefs for planner, builders, and verifier
-agents-md/       Source fragments used to compose AGENTS.md files
-docs/            Architecture notes, runbooks, templates, and experiment logs
-planning/        Milestone definitions and live task board state
-scripts/         Planner, task, smoke, and verification scripts
-src/             Product code for the real project built from this template
-tests/           Automated tests and regression coverage
-```
+- The project identity, architecture, milestones, and task board live in the repo.
+- Codex can operate with planner / builder / verifier boundaries instead of one undifferentiated loop.
+- Verification, next-task recommendation, and role ownership stay visible across the whole project.
+
+This is for teams who want Codex to keep progressing through a real software project, not just produce isolated code snippets.
+
+## Who It's For / Not For
+
+### It's For
+
+- Teams or solo builders using Codex on medium- to long-running projects.
+- People who want planner / builder / verifier separation instead of one mixed chat loop.
+- Builders who want AI workflow state, decisions, and verification evidence to live in the repository.
+- Anyone maintaining a reusable Codex operating template across multiple downstream repos.
+
+### It's Not For
+
+- One-off prompt coding or quick debugging sessions.
+- Users who do not want repo-level process, milestones, or task tracking.
+- Projects without a meaningful verification path.
+- Teams looking for a generic autonomous agent platform rather than a Codex-centered delivery workflow.
+
+## Compared With Typical AI Coding Workflows
+
+| Dimension | Typical AI Coding Workflow | Codex Harness Foundry |
+| --- | --- | --- |
+| Source of context | Chat history and ad hoc prompts | Repo-native context from project config, `AGENTS.md`, architecture docs, milestones, and task board |
+| Task tracking | Implicit or manual | Milestones, task blueprints, live task-board state, and next-task recommendation |
+| Role boundaries | Single mixed workflow | Planner / builder / verifier operating model with explicit ownership |
+| Verification | Optional and inconsistent | Standard verify flow: sync, compose `AGENTS.md`, refresh planner, typecheck, smoke |
+| Handoff persistence | Mostly lost in chat | Designed to preserve context, handoffs, decisions, and review artifacts in the repo |
+| Fit for long-running work | Weak once context grows | Built for repeatable, milestone-driven project progression |
 
 ## Commands
+
+Start here:
+
+- `pnpm init:project`
+- `pnpm verify`
+- `pnpm planner:next`
+- `pnpm tasks:status`
+
+Full reference:
 
 | Command | Purpose |
 | --- | --- |
@@ -87,8 +154,34 @@ tests/           Automated tests and regression coverage
 | `pnpm tasks:status` | Show the task board summary and task list |
 | `pnpm tasks:update -- <task-id> <status>` | Update a task status in `planning/task-board.json` |
 | `pnpm smoke` | Validate that planning files are structurally usable |
-| `pnpm typecheck` | Type-check the TypeScript automation scripts |
+| `pnpm typecheck` | Type-check the automation scripts |
 | `pnpm verify` | Run the standard verification gate |
+
+## Repository Layout
+
+```text
+agents/          Role briefs for planner, builders, and verifier
+agents-md/       Source fragments used to compose repo-aware AGENTS.md files
+docs/            Architecture notes, runbooks, templates, and experiment logs
+planning/        Milestone definitions and live task-board state
+scripts/         Planner, task, smoke, and verification scripts
+src/             Product code for the real project built from this template
+tests/           Automated tests and regression coverage
+```
+
+## FAQ
+
+**Is this a framework?**
+
+Not in the usual sense. It is a repo-native Codex operating template for context, planning, orchestration, and verification.
+
+**Is this only for Codex?**
+
+The repo is opinionated around Codex-style workflows and prompts, but the core ideas are portable if you want repo-native AI collaboration.
+
+**Do I need multiple agents to use it?**
+
+No. A solo builder can still use the planner / builder / verifier model as a disciplined workflow inside one project.
 
 ## Customizing the Template
 
@@ -128,14 +221,3 @@ This repository includes the usual GitHub maintenance files for an open template
 - `.editorconfig` and `.gitattributes`
 
 That means a forked project starts with a clearer collaboration baseline instead of having to add all of that later.
-
-## Fork Workflow
-
-The recommended downstream workflow is:
-
-1. create a repo from this template
-2. run `pnpm init:project`
-3. review the generated `docs/architecture/system.md`
-4. rewrite `planning/milestones.json` for your actual product
-5. run `pnpm verify`
-6. start your first Codex milestone
