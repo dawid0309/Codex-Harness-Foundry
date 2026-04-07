@@ -3,6 +3,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { normalizeConfig, readProjectConfig, root, syncProjectFiles, writeProjectConfig } from "./project-config";
+import { defaultPlannerOutput } from "./planner-state";
 
 type Args = Record<string, string>;
 
@@ -78,13 +79,17 @@ async function promptIfNeeded(currentArgs: Args) {
 async function resetTaskBoard() {
   const milestonesPath = path.join(root, "planning", "milestones.json");
   const taskBoardPath = path.join(root, "planning", "task-board.json");
+  const plannerOutputPath = path.join(root, "planning", "planner-output.json");
   const milestones = JSON.parse(await readFile(milestonesPath, "utf8")) as Array<{ id: string }>;
   const emptyBoard = {
     currentMilestoneId: milestones[0]?.id ?? null,
     lastRefreshedAt: null,
     tasks: [],
   };
-  await writeFile(taskBoardPath, `${JSON.stringify(emptyBoard, null, 2)}\n`, "utf8");
+  await Promise.all([
+    writeFile(taskBoardPath, `${JSON.stringify(emptyBoard, null, 2)}\n`, "utf8"),
+    writeFile(plannerOutputPath, `${JSON.stringify(defaultPlannerOutput(), null, 2)}\n`, "utf8"),
+  ]);
 }
 
 async function main() {

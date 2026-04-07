@@ -11,3 +11,4 @@ Primary references:
 - `docs/architecture/system.md`
 - `planning/milestones.json`
 - `planning/task-board.json`
+- `planning/planner-output.json`

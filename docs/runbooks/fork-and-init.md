@@ -53,12 +53,15 @@ After initialization, the main repo-native control points are:
 
 - `project.config.json.verification` for the ordered verify stages behind `pnpm verify`
 - `project.config.json.autonomy` for Codex CLI runtime behavior and structural stop conditions
+- `planning/planner-output.json` for planner proposals that the leader can accept into the task board
 - `docs/issues/harness-observations.json` for tracked issue-export source data
 
 Useful commands:
 
 ```powershell
 pnpm verify
+pnpm planner:propose
+pnpm planner:publish
 pnpm planner:next
 pnpm issues:export
 pnpm runtime:status

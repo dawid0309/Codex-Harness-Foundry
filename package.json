@@ -29,6 +29,8 @@
     "sync:project": "tsx scripts/sync-project.ts",
     "init:project": "tsx scripts/init-project.ts",
     "compose:agents": "pnpm exec agents-md compose",
+    "planner:propose": "tsx scripts/lead-planner.ts propose",
+    "planner:publish": "tsx scripts/lead-planner.ts publish",
     "planner:refresh": "tsx scripts/lead-planner.ts refresh",
     "planner:next": "tsx scripts/lead-planner.ts next",
     "tasks:plan": "tsx scripts/harness/tasks.ts plan",

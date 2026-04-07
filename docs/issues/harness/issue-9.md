@@ -1,7 +1,7 @@
 # Issue #9: Remove exporter drift with one canonical renderer and path
 
 - Batch: batch1
-- Status: planned
+- Status: landed
 - Linked issues: [#8](https://github.com/dawid0309/Codex-Harness-Foundry/issues/8)
 
 ## Summary

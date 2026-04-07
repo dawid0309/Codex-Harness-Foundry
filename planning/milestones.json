@@ -16,7 +16,7 @@
         "title": "Assemble the agents-md context skeleton",
         "milestone": "m1-foundation",
         "priority": "P0",
-        "owner_role": "lead-planner",
+        "owner_role": "planner",
         "dependencies": [],
         "input_artifacts": [
           "docs/architecture/system.md"
@@ -53,7 +53,8 @@
           "ready and backlog states can advance automatically"
         ],
         "verification": [
-          "pnpm planner:refresh",
+          "pnpm planner:propose",
+          "pnpm planner:publish",
           "pnpm smoke"
         ],
         "next_consumer": "verifier-reviewer"

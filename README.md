@@ -38,10 +38,12 @@ flowchart LR
     init --> agents["agents-md -> AGENTS.md"]
     init --> arch["docs/architecture/system.md"]
     arch --> milestones["planning/milestones.json"]
-    milestones --> board["planning/task-board.json"]
+    milestones --> planner["planner proposal"]
+    planner --> output["planning/planner-output.json"]
+    output --> board["planning/task-board.json"]
     agents --> verify["pnpm verify"]
-    board --> planner["planner / tasks scripts"]
-    planner --> verify
+    board --> choose["planner / tasks scripts"]
+    choose --> verify
     verify --> next["next task loop"]
     next --> planner
 ```
@@ -154,7 +156,9 @@ Full reference:
 | `pnpm init:project` | Interactively initialize a fork with its own project metadata and reset the task board |
 | `pnpm sync:project` | Reapply `project.config.json` to the package metadata and core docs |
 | `pnpm compose:agents` | Generate repo-local `AGENTS.md` files from `agents-md/` fragments |
-| `pnpm planner:refresh` | Rebuild the active milestone view and unlock ready tasks |
+| `pnpm planner:propose` | Generate a planner proposal artifact in `planning/planner-output.json` |
+| `pnpm planner:publish` | Accept planner output into `planning/task-board.json` as leader/orchestrator |
+| `pnpm planner:refresh` | Compatibility shortcut that runs `planner:propose` and `planner:publish` together |
 | `pnpm planner:next` | Print the next recommended ready tasks |
 | `pnpm tasks:plan` | Show the current actionable task plan |
 | `pnpm tasks:status` | Show the task board summary and task list |
@@ -179,6 +183,8 @@ scripts/         Planner, task, smoke, and verification scripts
 src/             Product code for the real project built from this template
 tests/           Automated tests and regression coverage
 ```
+
+`planning/planner-output.json` is the planner-owned proposal artifact. `planning/task-board.json` remains the leader-approved execution state.
 
 ## FAQ
 
@@ -246,6 +252,15 @@ For longer Codex CLI runs, the template can supervise a background session with 
 - Check state with `pnpm runtime:status`
 - Stop or resume with `pnpm runtime:stop` and `pnpm runtime:resume`
 - Read the [runtime control runbook](./docs/runbooks/runtime-control.md) for the status file and stop-condition details
+
+## Planner Publication Model
+
+Foundry now separates planner publication from leader orchestration in repo-visible steps.
+
+- The planner proposes task publication in `planning/planner-output.json`
+- The leader/orchestrator reviews that artifact and accepts it into `planning/task-board.json`
+- Builders consume published tasks only after leader acceptance
+- `pnpm planner:refresh` remains as a compatibility shortcut for `planner:propose` plus `planner:publish`
 
 ## Maintenance
 

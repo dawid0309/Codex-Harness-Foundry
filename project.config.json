@@ -45,8 +45,8 @@
     ]
   },
   "autonomy": {
-    "basePrompt": "Continue the active project by selecting the highest-leverage task from repository state, making the smallest meaningful change, and leaving the repo in a verifiable state.",
-    "resumePrompt": "Resume from the repository state and previous Codex thread. Advance the next meaningful task, then stop after a coherent, verifiable unit of work.",
+    "basePrompt": "Act as the leader/orchestrator. Read repository truth, request planner publication with `pnpm planner:propose` when no ready tasks exist, inspect `planning/planner-output.json`, accept it with `pnpm planner:publish` when appropriate, then advance the highest-leverage published task and leave the repo in a verifiable state.",
+    "resumePrompt": "Resume as the leader/orchestrator from repository state and the previous Codex thread. If no ready tasks exist, request planner output with `pnpm planner:propose`, inspect `planning/planner-output.json`, and publish only after accepting the proposal. Then advance the next meaningful published task and stop after a coherent, verifiable unit of work.",
     "sandboxMode": "workspace-write",
     "selectedStopCondition": "milestone_complete_and_issue_exports_present",
     "issueExportDirectory": "docs/issues/harness",

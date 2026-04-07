@@ -3,5 +3,6 @@
 
 - `planning/milestones.json` is the blueprint for staged delivery.
 - `planning/task-board.json` is the live execution state.
-- The lead planner should unblock blockers first, then dependencies, then the core path.
-- When `ready` is empty, generate the next task batch from the milestone blueprint instead of waiting for a user prompt.
+- `planning/planner-output.json` is the planner artifact proposed for leader review.
+- The planner should unblock blockers first, then dependencies, then the core path.
+- When `ready` is empty, generate the next publication proposal from the milestone blueprint instead of writing directly to the task board.
