@@ -107,7 +107,7 @@
       "number": 12,
       "title": "Separate leader orchestration from planner task publication",
       "batch": "followup",
-      "status": "planned",
+      "status": "landed",
       "summary": "Separate planner publication from leader/orchestrator control so task publication is proposed in an explicit repo artifact before it is accepted into the live task board.",
       "linkedIssues": [],
       "repoEvidence": [

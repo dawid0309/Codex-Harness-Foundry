@@ -1,7 +1,7 @@
 # Issue #12: Separate leader orchestration from planner task publication
 
 - Batch: followup
-- Status: planned
+- Status: landed
 - Linked issues: None
 
 ## Summary
