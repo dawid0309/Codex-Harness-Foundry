@@ -1,33 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-
-type TaskStatus =
-  | "backlog"
-  | "ready"
-  | "in_progress"
-  | "blocked"
-  | "review"
-  | "verified"
-  | "done";
-
-type TaskCard = {
-  id: string;
-  title: string;
-  milestone: string;
-  status: TaskStatus;
-  priority: string;
-  owner_role: string;
-  dependencies: string[];
-};
-
-type TaskBoard = {
-  currentMilestoneId?: string | null;
-  lastRefreshedAt?: string | null;
-  tasks: TaskCard[];
-};
-
-const root = process.cwd();
-const taskBoardPath = path.join(root, "planning", "task-board.json");
+import { loadJson, saveJson, taskBoardPath, type TaskBoard, type TaskCard, type TaskStatus } from "../planner-state";
 const allowedStatuses: TaskStatus[] = [
   "backlog",
   "ready",
@@ -39,11 +10,11 @@ const allowedStatuses: TaskStatus[] = [
 ];
 
 async function loadBoard(): Promise<TaskBoard> {
-  return JSON.parse(await readFile(taskBoardPath, "utf8")) as TaskBoard;
+  return loadJson<TaskBoard>(taskBoardPath);
 }
 
 async function saveBoard(taskBoard: TaskBoard): Promise<void> {
-  await writeFile(taskBoardPath, `${JSON.stringify(taskBoard, null, 2)}\n`, "utf8");
+  await saveJson(taskBoardPath, taskBoard);
 }
 
 function printTask(task: TaskCard) {
@@ -78,7 +49,7 @@ async function plan() {
   const ready = taskBoard.tasks.filter((task) => task.status === "ready");
 
   if (ready.length === 0) {
-    console.log("No ready tasks. Run `pnpm planner:refresh` to repopulate the board.");
+    console.log("No ready tasks. Run `pnpm planner:propose` and `pnpm planner:publish`, or use `pnpm planner:refresh` as the compatibility shortcut.");
     return;
   }
 

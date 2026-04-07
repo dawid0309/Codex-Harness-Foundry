@@ -1,7 +1,7 @@
 # Issue #7: Add background runtime controls for Codex CLI
 
 - Batch: batch2
-- Status: planned
+- Status: landed
 - Linked issues: [#10](https://github.com/dawid0309/Codex-Harness-Foundry/issues/10)
 
 ## Summary

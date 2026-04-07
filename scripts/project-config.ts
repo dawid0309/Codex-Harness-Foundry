@@ -130,9 +130,9 @@ export function defaultVerificationConfig(): VerificationConfig {
 export function defaultAutonomyConfig(): AutonomyConfig {
   return {
     basePrompt:
-      "Continue the active project by selecting the highest-leverage task from repository state, making the smallest meaningful change, and leaving the repo in a verifiable state.",
+      "Act as the leader/orchestrator. Read repository truth, request planner publication with `pnpm planner:propose` when no ready tasks exist, inspect `planning/planner-output.json`, accept it with `pnpm planner:publish` when appropriate, then advance the highest-leverage published task and leave the repo in a verifiable state.",
     resumePrompt:
-      "Resume from the repository state and previous Codex thread. Advance the next meaningful task, then stop after a coherent, verifiable unit of work.",
+      "Resume as the leader/orchestrator from repository state and the previous Codex thread. If no ready tasks exist, request planner output with `pnpm planner:propose`, inspect `planning/planner-output.json`, and publish only after accepting the proposal. Then advance the next meaningful published task and stop after a coherent, verifiable unit of work.",
     sandboxMode: "workspace-write",
     selectedStopCondition: "milestone_complete_and_issue_exports_present",
     issueExportDirectory: "docs/issues/harness",
@@ -170,6 +170,7 @@ Primary references:
 - \`docs/architecture/system.md\`
 - \`planning/milestones.json\`
 - \`planning/task-board.json\`
+- \`planning/planner-output.json\`
 `;
 }
 
@@ -184,7 +185,8 @@ Before doing substantial work, read:
 1. \`docs/architecture/system.md\`
 2. \`planning/milestones.json\`
 3. \`planning/task-board.json\`
-4. the nearest role-specific \`AGENTS.md\`
+4. \`planning/planner-output.json\`
+5. the nearest role-specific \`AGENTS.md\`
 
 Default working assumptions:
 

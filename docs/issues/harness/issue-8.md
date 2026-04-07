@@ -1,7 +1,7 @@
 # Issue #8: Standardize issue export command and default output location
 
 - Batch: batch1
-- Status: planned
+- Status: landed
 - Linked issues: [#9](https://github.com/dawid0309/Codex-Harness-Foundry/issues/9)
 
 ## Summary

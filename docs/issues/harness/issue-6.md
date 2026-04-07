@@ -1,7 +1,7 @@
 # Issue #6: Make verification stages configurable from project config
 
 - Batch: batch1
-- Status: planned
+- Status: landed
 - Linked issues: [#8](https://github.com/dawid0309/Codex-Harness-Foundry/issues/8), [#9](https://github.com/dawid0309/Codex-Harness-Foundry/issues/9)
 
 ## Summary

@@ -1,0 +1,23 @@
+{
+  "generatedAt": "2026-04-07T13:31:51.458Z",
+  "activeMilestoneId": "m1-foundation",
+  "summary": [
+    "Planner proposed 0 new task publication(s).",
+    "Planner proposed 0 backlog-to-ready transition(s).",
+    "Leader should accept or reject publication for milestone m1-foundation."
+  ],
+  "publication": {
+    "currentMilestoneId": "m1-foundation",
+    "newTasks": [],
+    "statusUpdates": []
+  },
+  "recommendedNextTasks": [
+    {
+      "id": "M1-T001",
+      "title": "Assemble the agents-md context skeleton",
+      "priority": "P0",
+      "owner_role": "planner",
+      "status": "ready"
+    }
+  ]
+}

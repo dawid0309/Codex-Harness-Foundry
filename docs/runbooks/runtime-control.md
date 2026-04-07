@@ -13,6 +13,8 @@ pnpm runtime:resume
 
 These commands are intentionally Codex-CLI specific. The template uses `codex exec` for the first cycle and `codex exec resume` for follow-up cycles.
 
+When the runtime needs new work published, the leader/orchestrator should request planner output with `pnpm planner:propose`, inspect `planning/planner-output.json`, and accept it with `pnpm planner:publish` instead of publishing tasks inline.
+
 ## Runtime State
 
 Runtime state is stored in ignored files under `data/runtime/`.

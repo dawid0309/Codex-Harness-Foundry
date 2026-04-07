@@ -1,7 +1,7 @@
 # Issue #10: Use structural stop conditions for autonomy
 
 - Batch: batch2
-- Status: planned
+- Status: landed
 - Linked issues: [#7](https://github.com/dawid0309/Codex-Harness-Foundry/issues/7)
 
 ## Summary
