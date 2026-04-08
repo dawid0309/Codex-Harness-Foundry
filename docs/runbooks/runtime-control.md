@@ -26,9 +26,11 @@ Runtime state is stored in ignored files under `data/runtime/`.
 - `data/runtime/codex-runtime-stderr.log`
 - `data/runtime/codex-runtime-last-message.txt`
 
-The status file records the runtime state, worker and child process ids, thread id, heartbeat, selected stop condition, runtime home, terminal blocker streak, and latest result summary.
+The status file records the runtime state, worker and child process ids, thread id, heartbeat, selected stop condition, runtime home, terminal blocker streak, effective detached sandbox mode, whether the last cycle executed a repo-local command, and latest result summary.
 
 Detached runs use a repo-scoped Codex home under `data/runtime/codex-home/`. This keeps the runtime from inheriting workstation-global Codex state, shell profiles, or unrelated local noise when it starts in the background.
+
+On Windows, detached runtime sessions keep the real profile directories intact. When the configured detached sandbox is `workspace-write`, the runtime falls back to `danger-full-access` for the detached Codex process so shell startup can reach repo commands reliably.
 
 ## Structural Stop Conditions
 
@@ -55,10 +57,13 @@ Configure the blocker budget in `project.config.json.autonomy.maxConsecutiveTerm
 
 The runtime treats repeated unrecoverable conditions as terminal blockers, including:
 
+- shell startup failures before any repo-local command can run
 - read-only workspace or sandbox restrictions
 - approval or policy rejections
 - required repo commands that are not executable
 
 Classification is precedence-aware: explicit policy rejection and helper-launch failures are reported before generic read-only or write-capability wording so runtime status reflects the upstream blocker more accurately.
+
+The runtime also refuses to report `completed` when a cycle exits before any repo-local command executes, even if the structural stop predicate already evaluates true.
 
 When the same blocker repeats for the configured number of cycles, the runtime moves to `blocked` instead of looping indefinitely. Use `pnpm runtime:resume` after fixing the underlying repo or policy constraint.

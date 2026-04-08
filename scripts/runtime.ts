@@ -43,6 +43,8 @@ type RuntimeStatus = {
   lastBlockerSignature: string | null;
   maxConsecutiveTerminalBlockers: number;
   lastExitCode: number | null;
+  effectiveSandboxMode: string;
+  lastCycleExecutedRepoCommand: boolean;
 };
 
 type TaskBoardTask = {
@@ -61,6 +63,8 @@ type CycleResult = {
   stdoutText: string;
   stderrText: string;
   blocker: TerminalBlocker | null;
+  executedRepoCommand: boolean;
+  effectiveSandboxMode: string;
 };
 
 type RuntimeEvent = {
@@ -136,6 +140,8 @@ function defaultStatus(config: AutonomyConfig = defaultAutonomyConfig()): Runtim
     lastBlockerSignature: null,
     maxConsecutiveTerminalBlockers: Math.max(1, config.maxConsecutiveTerminalBlockers),
     lastExitCode: null,
+    effectiveSandboxMode: config.sandboxMode,
+    lastCycleExecutedRepoCommand: false,
   };
 }
 
@@ -352,8 +358,6 @@ function buildRuntimeEnvironment(): NodeJS.ProcessEnv {
   }
 
   env.CODEX_HOME = runtimeCodexHomePath;
-  env.HOME = runtimeCodexHomePath;
-  env.USERPROFILE = runtimeCodexHomePath;
   env[runtimeSourceConfigEnv] = path.join(process.env.USERPROFILE ?? os.homedir(), ".codex", "config.toml");
   env.POWERSHELL_TELEMETRY_OPTOUT = "1";
   env.GIT_TERMINAL_PROMPT = "0";
@@ -369,11 +373,19 @@ function buildRuntimeEnvironment(): NodeJS.ProcessEnv {
   return env;
 }
 
-function buildCodexArgs(status: RuntimeStatus, config: AutonomyConfig): string[] {
+function detachedSandboxMode(config: AutonomyConfig): string {
+  if (process.platform === "win32" && config.sandboxMode === "workspace-write") {
+    return "danger-full-access";
+  }
+
+  return config.sandboxMode;
+}
+
+function buildCodexArgs(status: RuntimeStatus, config: AutonomyConfig, effectiveSandboxMode: string): string[] {
   const args: string[] = ["-c", "shell_environment_policy.inherit=none"];
 
   if (!status.threadId) {
-    args.push("exec", "--json", "-C", root, "-s", config.sandboxMode, "-o", lastMessagePath);
+    args.push("exec", "--json", "-C", root, "-s", effectiveSandboxMode, "-o", lastMessagePath);
     if (config.model) {
       args.push("-m", config.model);
     }
@@ -433,7 +445,8 @@ function extractRuntimeEventText(event: RuntimeEvent): string {
 
 async function runCodexCycle(status: RuntimeStatus, config: AutonomyConfig): Promise<CycleResult> {
   const prompt = runtimePrompt(status.threadId ? config.resumePrompt : config.basePrompt);
-  const args = buildCodexArgs(status, config);
+  const effectiveSandboxMode = detachedSandboxMode(config);
+  const args = buildCodexArgs(status, config, effectiveSandboxMode);
   const env = buildRuntimeEnvironment();
 
   const child = spawn(codexCommand(), args, {
@@ -454,6 +467,7 @@ async function runCodexCycle(status: RuntimeStatus, config: AutonomyConfig): Pro
       issueExportDirectory: config.issueExportDirectory,
       runtimeCodexHome: path.relative(root, runtimeCodexHomePath),
       environmentMode: "repo-scoped",
+      effectiveSandboxMode,
     }),
     config,
   );
@@ -465,6 +479,7 @@ async function runCodexCycle(status: RuntimeStatus, config: AutonomyConfig): Pro
   let stdoutBuffer = "";
   let stdoutSignalsBuffer = "";
   let stderrBuffer = "";
+  let executedRepoCommand = false;
 
   const processStdoutLine = async (line: string) => {
     const trimmed = line.trim();
@@ -474,6 +489,17 @@ async function runCodexCycle(status: RuntimeStatus, config: AutonomyConfig): Pro
 
     try {
       const event = JSON.parse(trimmed) as RuntimeEvent;
+      if (event.item?.type === "command_execution") {
+        const normalizedCommand = event.item.command?.replace(/\\/g, "/") ?? "";
+        const normalizedRoot = root.replace(/\\/g, "/");
+        if (
+          normalizedCommand.includes(normalizedRoot) ||
+          /project\.config\.json|planning\/|docs\/architecture\/|agents-md\/|AGENTS\.md|data\/runtime\//i.test(normalizedCommand)
+        ) {
+          executedRepoCommand = true;
+        }
+      }
+
       const eventText = extractRuntimeEventText(event);
       if (eventText) {
         stdoutSignalsBuffer = trimBuffer(`${stdoutSignalsBuffer}\n${eventText}`);
@@ -546,6 +572,8 @@ async function runCodexCycle(status: RuntimeStatus, config: AutonomyConfig): Pro
     stdoutText: stdoutSignalsBuffer.trim(),
     stderrText: stderrBuffer,
     blocker,
+    executedRepoCommand,
+    effectiveSandboxMode,
   };
 }
 
@@ -557,6 +585,10 @@ function nextStateForCycle(
 ): RuntimeState {
   if (cycleResult.exitCode !== 0) {
     return "failed";
+  }
+
+  if (!cycleResult.executedRepoCommand) {
+    return cycleResult.blocker && blockerCount >= blockerBudget ? "blocked" : "failed";
   }
 
   if (matchedStopCondition) {
@@ -583,6 +615,12 @@ function resultSummary(
     return cycleResult.blocker
       ? `Codex CLI exited with code ${cycleResult.exitCode}. Terminal blocker detected: ${cycleResult.blocker.label}.`
       : `Codex CLI exited with code ${cycleResult.exitCode}.`;
+  }
+
+  if (!cycleResult.executedRepoCommand) {
+    return cycleResult.blocker
+      ? `Codex CLI did not successfully execute a repo-local command. Terminal blocker detected: ${cycleResult.blocker.label}.`
+      : "Codex CLI exited without successfully executing a repo-local command.";
   }
 
   if (nextState === "blocked" && cycleResult.blocker) {
@@ -625,6 +663,7 @@ async function runWorker() {
       runtimeCodexHome: path.relative(root, runtimeCodexHomePath),
       environmentMode: "repo-scoped",
       maxConsecutiveTerminalBlockers: Math.max(1, config.maxConsecutiveTerminalBlockers),
+      effectiveSandboxMode: detachedSandboxMode(config),
     }),
     config,
   );
@@ -672,6 +711,8 @@ async function runWorker() {
         lastExitCode: cycleResult.exitCode,
         runtimeCodexHome: path.relative(root, runtimeCodexHomePath),
         environmentMode: "repo-scoped",
+        effectiveSandboxMode: cycleResult.effectiveSandboxMode,
+        lastCycleExecutedRepoCommand: cycleResult.executedRepoCommand,
       }),
       config,
     );
@@ -711,6 +752,7 @@ async function spawnWorker(mode: "start" | "resume") {
           state: "starting",
           startTime: nowIso(),
           lastHeartbeat: nowIso(),
+          effectiveSandboxMode: detachedSandboxMode(config),
         }
       : {
           ...status,
@@ -719,6 +761,8 @@ async function spawnWorker(mode: "start" | "resume") {
           consecutiveTerminalBlockers: 0,
           lastBlockerSignature: null,
           lastExitCode: null,
+          effectiveSandboxMode: detachedSandboxMode(config),
+          lastCycleExecutedRepoCommand: false,
         };
 
   if (mode === "start") {
@@ -747,6 +791,7 @@ async function spawnWorker(mode: "start" | "resume") {
           : "Background runtime resumed with repo-scoped Codex home.",
       runtimeCodexHome: path.relative(root, runtimeCodexHomePath),
       environmentMode: "repo-scoped",
+      effectiveSandboxMode: detachedSandboxMode(config),
     }),
     config,
   );
@@ -786,6 +831,8 @@ async function commandStatus() {
   console.log(`Issue export directory: ${effectiveStatus.issueExportDirectory}`);
   console.log(`Runtime Codex home: ${effectiveStatus.runtimeCodexHome}`);
   console.log(`Environment mode: ${effectiveStatus.environmentMode}`);
+  console.log(`Effective sandbox mode: ${effectiveStatus.effectiveSandboxMode}`);
+  console.log(`Last cycle executed repo command: ${effectiveStatus.lastCycleExecutedRepoCommand}`);
   console.log(`Terminal blocker streak: ${effectiveStatus.consecutiveTerminalBlockers}/${effectiveStatus.maxConsecutiveTerminalBlockers}`);
   console.log(`Last blocker signature: ${effectiveStatus.lastBlockerSignature ?? "n/a"}`);
   console.log(`Latest result: ${effectiveStatus.latestResultSummary ?? "n/a"}`);
