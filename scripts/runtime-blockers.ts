@@ -9,6 +9,18 @@ type RuntimeBlockerMatcher = TerminalBlocker & {
 
 const blockerMatchers: RuntimeBlockerMatcher[] = [
   {
+    signature: "shell-startup-failure",
+    label: "shell startup failed before repo commands could run",
+    patterns: [
+      /CreateProcessWithLogonW failed:\s*1326/i,
+      /0x8009001d/i,
+      /\b8009001d\b/i,
+      /Windows PowerShell startup failure/i,
+      /shell startup failure/i,
+      /failed before any repo command executes/i,
+    ],
+  },
+  {
     signature: "policy-rejection",
     label: "approval or policy rejection prevents progress",
     patterns: [

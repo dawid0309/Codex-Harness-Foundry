@@ -251,6 +251,7 @@ For longer Codex CLI runs, the template can supervise a background session with 
 
 - Configure runtime behavior in `project.config.json.autonomy`
 - Detached runs use a repo-scoped Codex home under `data/runtime/codex-home/` to avoid inheriting workstation-global Codex state
+- On Windows, detached runtime sessions fall back from `workspace-write` to `danger-full-access` so shell startup can reach repo commands reliably
 - Start with `pnpm runtime:start`
 - Check state with `pnpm runtime:status`
 - Stop or resume with `pnpm runtime:stop` and `pnpm runtime:resume`
