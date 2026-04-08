@@ -11,6 +11,7 @@ import {
   type AutonomyConfig,
   type StopConditionId,
 } from "./project-config";
+import { detectTerminalBlocker, type TerminalBlocker } from "./runtime-blockers";
 
 type RuntimeState =
   | "idle"
@@ -52,11 +53,6 @@ type TaskBoardTask = {
 type TaskBoard = {
   currentMilestoneId?: string;
   tasks?: TaskBoardTask[];
-};
-
-type TerminalBlocker = {
-  signature: string;
-  label: string;
 };
 
 type CycleResult = {
@@ -408,58 +404,6 @@ function trimBuffer(buffer: string, maxChars = 12000) {
 
 async function appendLog(filePath: string, chunk: string) {
   await appendFile(filePath, chunk, "utf8");
-}
-
-function detectTerminalBlocker(lastMessage: string, stdoutText: string, stderrText: string): TerminalBlocker | null {
-  const text = `${lastMessage}\n${stdoutText}\n${stderrText}`;
-
-  const matchers: Array<TerminalBlocker & { patterns: RegExp[] }> = [
-    {
-      signature: "workspace-read-only",
-      label: "workspace or sandbox is read-only",
-      patterns: [
-        /workspace is read-only/i,
-        /read-only workspace/i,
-        /workspace remains read-only/i,
-        /sandbox.*read-only/i,
-        /cannot write (files|changes|to)/i,
-        /no writable/i,
-        /missing write capability/i,
-        /write capability/i,
-      ],
-    },
-    {
-      signature: "policy-rejection",
-      label: "approval or policy rejection prevents progress",
-      patterns: [
-        /approval policy/i,
-        /requires approval/i,
-        /blocked by policy/i,
-        /policy rejection/i,
-        /not permitted by policy/i,
-      ],
-    },
-    {
-      signature: "command-not-executable",
-      label: "required planner or repo command is not executable",
-      patterns: [
-        /pnpm planner:propose.*not executable/i,
-        /pnpm planner:publish.*not executable/i,
-        /command .* not executable/i,
-      ],
-    },
-  ];
-
-  for (const matcher of matchers) {
-    if (matcher.patterns.some((pattern) => pattern.test(text))) {
-      return {
-        signature: matcher.signature,
-        label: matcher.label,
-      };
-    }
-  }
-
-  return null;
 }
 
 function extractRuntimeEventText(event: RuntimeEvent): string {
