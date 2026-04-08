@@ -13,4 +13,5 @@ Generated from `docs/issues/harness-observations.json`.
 | [#14](https://github.com/dawid0309/Codex-Harness-Foundry/issues/14) | Detached runtime inherits global shell and Codex state noise | followup | landed | [draft](./issue-14.md) |
 | [#15](https://github.com/dawid0309/Codex-Harness-Foundry/issues/15) | Runtime keeps looping after repeated unrecoverable blockers | followup | landed | [draft](./issue-15.md) |
 | [#17](https://github.com/dawid0309/Codex-Harness-Foundry/issues/17) | Propose the next milestone when the final milestone is fully verified | followup | landed | [draft](./issue-17.md) |
+| [#19](https://github.com/dawid0309/Codex-Harness-Foundry/issues/19) | Runtime misclassifies policy rejections as read-only blockers | followup | landed | [draft](./issue-19.md) |
 

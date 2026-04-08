@@ -59,4 +59,6 @@ The runtime treats repeated unrecoverable conditions as terminal blockers, inclu
 - approval or policy rejections
 - required repo commands that are not executable
 
+Classification is precedence-aware: explicit policy rejection and helper-launch failures are reported before generic read-only or write-capability wording so runtime status reflects the upstream blocker more accurately.
+
 When the same blocker repeats for the configured number of cycles, the runtime moves to `blocked` instead of looping indefinitely. Use `pnpm runtime:resume` after fixing the underlying repo or policy constraint.
