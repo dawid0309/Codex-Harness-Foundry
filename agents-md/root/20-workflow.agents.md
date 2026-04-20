@@ -8,4 +8,4 @@ The main lead agent should operate in this order:
 3. If no `ready` task exists, generate the next batch from the milestone blueprint.
 4. After a builder finishes, run the shared verification gate.
 5. Write the result back into the task board, handoff, and review or verification records.
-6. Continue automatically unless a stop condition is reached.
+6. End the current loop after one coherent harness cycle; start a new worker cycle only when the next run is intentional.

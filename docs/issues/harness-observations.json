@@ -25,22 +25,22 @@
     },
     {
       "number": 7,
-      "title": "Add background runtime controls for Codex CLI",
+      "title": "Add background harness worker controls for Codex CLI",
       "batch": "batch2",
       "status": "planned",
-      "summary": "Provide start, status, stop, and resume commands for a Codex-CLI-specific background runtime so longer runs can be supervised from repo state.",
+      "summary": "Provide start, status, stop, and resume commands for a background harness worker so longer runs can be supervised through the generic harness kernel.",
       "linkedIssues": [10],
       "repoEvidence": [
-        "The template already encodes planning state in planning/task-board.json and project.config.json.",
-        "Codex CLI supports non-interactive exec and resume flows that can be wrapped by the template."
+        "The harness kernel already defines run specs, contracts, evaluation artifacts, and live state.",
+        "Codex CLI supports non-interactive exec and resume flows that can be wrapped by a worker process without reviving repo-native runtime logic."
       ],
       "implementationNotes": [
-        "Add a runtime controller specific to codex exec and codex exec resume.",
-        "Persist runtime status in ignored files under data/runtime/.",
-        "Report thread id, process handles, heartbeats, stop condition, and latest result summary."
+        "Add a worker controller around harness run and harness resume.",
+        "Persist worker status in ignored files under data/harness/.",
+        "Report run id, thread id, process handles, latest checkpoint, and latest result summary."
       ],
       "closureCondition": [
-        "Background runtime commands land and runtime state can be queried and controlled from the repo."
+        "Background harness worker commands land and worker state can be queried and controlled from the repo."
       ]
     },
     {
@@ -85,22 +85,22 @@
     },
     {
       "number": 10,
-      "title": "Use structural stop conditions for autonomy",
+      "title": "Replace runtime stop loops with one-cycle harness worker policy",
       "batch": "batch2",
       "status": "planned",
-      "summary": "Make autonomous stopping decisions from repository state instead of free-form text heuristics.",
+      "summary": "Replace repo-native autonomous stop predicates with a single-cycle worker policy so the harness kernel stays generic.",
       "linkedIssues": [7],
       "repoEvidence": [
-        "planning/task-board.json already exposes milestone and task states that can drive stop predicates.",
-        "Issue export artifacts can be verified structurally by checking the generated directory."
+        "The harness kernel already persists checkpoints and live state for each run.",
+        "Repo-native stop predicates are specific to Foundry and should not be embedded in a generic harness worker."
       ],
       "implementationNotes": [
-        "Add project.config.json.autonomy with the selected stop condition.",
-        "Evaluate stop predicates against planning/task-board.json and docs/issues/harness/.",
-        "Implement stop logic together with the Codex CLI runtime controller."
+        "Remove selected stop-condition fields from project.config.json.autonomy.",
+        "Make each background worker run own one coherent harness cycle.",
+        "Keep future continuation policy as an explicit harness feature rather than an implicit runtime loop."
       ],
       "closureCondition": [
-        "The runtime can stop from configured repo-state predicates without relying on natural-language completion detection."
+        "The background worker exits after one coherent harness cycle without any repo-native stop-condition configuration."
       ]
     }
   ]

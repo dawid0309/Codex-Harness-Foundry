@@ -21,7 +21,9 @@ pnpm init:project
 5. Review the generated files:
 
 - `project.config.json`
+- `docs/intent/current.md`
 - `docs/architecture/system.md`
+- `docs/feedback/loop.md`
 - `agents-md/00-project.agents.md`
 - `agents-md/root/00-project.agents.md`
 - `package.json`
@@ -44,6 +46,7 @@ pnpm issues:export
 - updates `project.config.json`
 - syncs package metadata and repo URLs
 - rewrites the core project identity docs
+- creates the environment / intent / feedback entry points if they do not exist yet
 - refreshes the license holder and `CODEOWNERS`
 - resets `planning/task-board.json` to a clean starting point
 
@@ -52,7 +55,9 @@ pnpm issues:export
 After initialization, the main repo-native control points are:
 
 - `project.config.json.verification` for the ordered verify stages behind `pnpm verify`
-- `project.config.json.autonomy` for Codex CLI runtime behavior and structural stop conditions
+- `project.config.json.repoTruth`, `intent`, `feedback`, and `agents` for canonical repo records
+- `project.config.json.autonomy` for Codex CLI prompt, sandbox, and model defaults
+- `harness.manifest.json` for adapter, evaluator, and worker behavior
 - `docs/issues/harness-observations.json` for tracked issue-export source data
 
 Useful commands:
@@ -61,11 +66,12 @@ Useful commands:
 pnpm verify
 pnpm planner:next
 pnpm issues:export
-pnpm runtime:status
+pnpm harness:worker:status
 ```
 
 ## Suggested First Prompts For Codex
 
 - `Read AGENTS.md and recommend the first ready task`
+- `Read AGENTS.md, docs/intent/current.md, and propose the next delivery loop`
 - `Rewrite the milestone plan for this product based on docs/architecture/system.md`
 - `Create the first verifiable implementation slice for milestone one`

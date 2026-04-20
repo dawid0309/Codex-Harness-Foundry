@@ -31,6 +31,12 @@
         "enabled": true
       },
       {
+        "id": "issues-export",
+        "label": "Export issue drafts",
+        "command": "pnpm run issues:export",
+        "enabled": true
+      },
+      {
         "id": "typecheck",
         "label": "Typecheck",
         "command": "pnpm run typecheck",
@@ -48,8 +54,34 @@
     "basePrompt": "Continue the active project by selecting the highest-leverage task from repository state, making the smallest meaningful change, and leaving the repo in a verifiable state.",
     "resumePrompt": "Resume from the repository state and previous Codex thread. Advance the next meaningful task, then stop after a coherent, verifiable unit of work.",
     "sandboxMode": "workspace-write",
-    "selectedStopCondition": "milestone_complete_and_issue_exports_present",
-    "issueExportDirectory": "docs/issues/harness",
     "model": null
+  },
+  "repoTruth": {
+    "requiredRecords": [
+      "project.config.json",
+      "docs/architecture/system.md",
+      "docs/intent/current.md",
+      "docs/feedback/loop.md",
+      "docs/feedback/verification/README.md",
+      "planning/milestones.json",
+      "planning/task-board.json"
+    ]
+  },
+  "intent": {
+    "canonicalFiles": [
+      "docs/intent/current.md",
+      "docs/architecture/system.md",
+      "planning/milestones.json",
+      "planning/task-board.json"
+    ]
+  },
+  "feedback": {
+    "observationsPath": "docs/issues/harness-observations.json",
+    "issueDraftDirectory": "docs/issues/harness",
+    "verificationArtifactDirectory": "docs/feedback/verification"
+  },
+  "agents": {
+    "mode": "index",
+    "maxLines": 80
   }
 }
