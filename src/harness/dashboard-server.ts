@@ -13,7 +13,9 @@ import {
   rebuildRunBoard,
 } from "./run-board";
 import { buildPlanView } from "./plan-view";
+import { composeRoleBrief, composeRoleContextPacket } from "./roles";
 import { JsonStateBackend } from "./state-backend";
+import { approveTarget, buildTargetProfileDraft, readTargetRoleBriefs, writeTargetProfileDraft } from "./target-profile";
 import { loadTargetRegistry, resolveTargetRegistration } from "./targets";
 import {
   buildSpec,
@@ -88,7 +90,27 @@ type DashboardActionBody = {
     activeTrack?: string | null;
     promoteCaseId?: string | null;
   };
+  profile?: {
+    repo?: string;
+    targetId?: string;
+    label?: string;
+  };
 };
+
+const ALL_ROLE_KINDS = [
+  "supervisor",
+  "strategy_planner",
+  "milestone_planner",
+  "case_planner",
+  "strategy_evaluator",
+  "milestone_evaluator",
+  "executor",
+  "runtime_operator",
+  "environment_remediator",
+  "case_evaluator",
+  "handoff_recorder",
+  "state_reconciler",
+] as const;
 
 function json(response: ServerResponse, statusCode: number, payload: unknown) {
   response.statusCode = statusCode;
@@ -172,6 +194,9 @@ async function loadTargets(options: DashboardServerOptions) {
       adapterId: resolved.adapterId,
       artifactRoot: resolved.artifactRoot,
       adapterConfigPath: resolved.adapterConfigPath,
+      roleBriefsPath: resolved.roleBriefsPath ?? null,
+      approvalState: resolved.approvalState ?? "approved",
+      profileGeneratedAt: resolved.profileGeneratedAt ?? null,
     };
   });
 }
@@ -367,6 +392,75 @@ async function resolveTargetFiles(options: DashboardServerOptions, targetId: str
     milestones: milestones ?? [],
     strategyEvaluation,
     milestoneEvaluations: milestoneEvaluations ?? {},
+  };
+}
+
+function summarizeContract(contract: Record<string, unknown> | null) {
+  if (!contract) {
+    return null;
+  }
+  const caseId = typeof contract.caseId === "string" ? contract.caseId : null;
+  const title = typeof contract.title === "string" ? contract.title : null;
+  const goal = typeof contract.goal === "string" ? contract.goal : null;
+  return [caseId, title, goal].filter(Boolean).join(" - ") || null;
+}
+
+function summarizeStrategy(strategy: ExternalTargetStrategy | null) {
+  if (!strategy) {
+    return null;
+  }
+  return [strategy.id, strategy.title, strategy.summary].filter(Boolean).join(" - ") || null;
+}
+
+function summarizeMilestone(milestone: ExternalTargetMilestone | null) {
+  if (!milestone) {
+    return null;
+  }
+  return [milestone.id, milestone.title, milestone.goal].filter(Boolean).join(" - ") || null;
+}
+
+async function readRoleBriefData(
+  options: DashboardServerOptions,
+  targetId: string,
+  activeRoleKind: typeof ALL_ROLE_KINDS[number] | null,
+  visible: {
+    contractSummary?: string | null;
+    strategySummary?: string | null;
+    milestoneSummary?: string | null;
+    latestEvaluationSummary?: string | null;
+    latestFailureEnvelope?: HarnessRunBoard["latestFailureEnvelope"] | null;
+    latestCheckpoint?: string | null;
+  } = {},
+) {
+  const { target, overlay, roleBriefsPath } = await readTargetRoleBriefs(
+    options.controlRepoRoot,
+    targetId,
+    options.targetRegistryPath,
+  );
+  const composedBriefs = Object.fromEntries(
+    ALL_ROLE_KINDS.map((kind) => [kind, composeRoleBrief(kind, overlay)]),
+  );
+  const roleKind = activeRoleKind ?? "supervisor";
+  const activeRoleContext = composeRoleContextPacket({
+    kind: roleKind,
+    projectOverlay: overlay,
+    contractSummary: visible.contractSummary ?? null,
+    strategySummary: visible.strategySummary ?? null,
+    milestoneSummary: visible.milestoneSummary ?? null,
+    latestEvaluationSummary: visible.latestEvaluationSummary ?? null,
+    latestFailureEnvelope: visible.latestFailureEnvelope ?? null,
+    latestCheckpoint: visible.latestCheckpoint ?? null,
+  });
+
+  return {
+    targetId: target.id,
+    approvalState: target.approvalState ?? "approved",
+    profileGeneratedAt: target.profileGeneratedAt ?? null,
+    roleBriefsPath: path.relative(options.controlRepoRoot, roleBriefsPath).replaceAll("\\", "/"),
+    overlay,
+    activeRoleBrief: composedBriefs[roleKind],
+    activeRoleContext,
+    composedBriefs,
   };
 }
 
@@ -1254,14 +1348,43 @@ async function readTargetStatus(options: DashboardServerOptions, targetId: strin
   const currentRun = status.runId ? await readRunDetails(options, targetId, status.runId) : null;
   const board = currentRun?.board ?? null;
   const plan = currentRun?.plan ?? null;
+  const latestEvaluation = currentRun?.evaluation as {
+    normalizedSummary?: string | null;
+    passed?: boolean;
+  } | null;
+  const directionData = await readDirectionData(options, targetId).catch(() => null);
+  const activeStrategy = directionData?.strategy ?? null;
+  const activeMilestone = directionData?.milestones?.find((item: ExternalTargetMilestone) => item.status === "active") ?? null;
+  const roleBriefData = await readRoleBriefData(
+    options,
+    targetId,
+    (board?.activeRole ?? status.activeRole ?? null) as typeof ALL_ROLE_KINDS[number] | null,
+    {
+      contractSummary: summarizeContract(currentRun?.contract ?? null),
+      strategySummary: summarizeStrategy(activeStrategy),
+      milestoneSummary: summarizeMilestone(activeMilestone),
+      latestEvaluationSummary: latestEvaluation?.normalizedSummary
+        ?? (latestEvaluation?.passed ? "Latest case evaluation passed." : null),
+      latestFailureEnvelope: board?.latestFailureEnvelope ?? liveState.latestFailureEnvelope ?? status.latestFailureEnvelope ?? null,
+      latestCheckpoint: liveState.latestCheckpoint ?? null,
+    },
+  );
   return {
     targetId,
     targetRepoRoot: spec.targetRepoRoot,
     artifactRoot: spec.artifactRoot,
+    approvalState: roleBriefData.approvalState,
+    profileGeneratedAt: roleBriefData.profileGeneratedAt,
+    roleBriefsPath: roleBriefData.roleBriefsPath,
     activeLane: board?.activeLane ?? status.activeLane ?? null,
+    activeRole: board?.activeRole ?? status.activeRole ?? null,
+    activeRoleLabel: status.activeRoleLabel ?? null,
+    activeRoleBrief: roleBriefData.activeRoleBrief,
+    activeRoleContext: roleBriefData.activeRoleContext,
     activeTask: board?.tasks.find((task) => task.id === (board?.activeNodeId ?? status.activeTaskId)) ?? null,
     activePlanStep: plan?.steps.find((step) => step.id === plan.activeStepId) ?? null,
     activeSubagentCount: board?.lanes.subagents.runningTasks ?? status.activeSubagentCount,
+    executionTelemetryCount: board?.executionTelemetry.totalTasks ?? status.executionTelemetryCount,
     workerStatus: status,
     liveState,
     board,
@@ -1273,6 +1396,7 @@ async function readTargetStatus(options: DashboardServerOptions, targetId: strin
       stderrTail: await tailFile(stderrLogPath),
     },
     latestEvaluation: currentRun?.evaluation ?? null,
+    latestFailureEnvelope: board?.latestFailureEnvelope ?? liveState.latestFailureEnvelope ?? status.latestFailureEnvelope ?? null,
     executionReconciled: currentRun?.executionReconciled ?? null,
     plannerContextBudget: currentRun?.planner?.contextBudget ?? null,
     currentRun,
@@ -1872,6 +1996,19 @@ function htmlPage(port: number) {
           <label for="targetSelect">Target repository</label>
           <select id="targetSelect"></select>
           <div style="height: 12px"></div>
+          <label for="profileRepoInput">New target repo path</label>
+          <input id="profileRepoInput" placeholder="C:/path/to/repo" />
+          <div style="height: 12px"></div>
+          <label for="profileTargetIdInput">New target id</label>
+          <input id="profileTargetIdInput" placeholder="optional-target-id" />
+          <div style="height: 12px"></div>
+          <label for="profileLabelInput">New target label</label>
+          <input id="profileLabelInput" placeholder="Optional target label" />
+          <div class="actions" style="margin-top: 12px;">
+            <button id="profileTargetBtn" class="secondary">Profile Repo</button>
+            <button id="approveTargetBtn" class="secondary">Approve Target</button>
+          </div>
+          <div style="height: 12px"></div>
           <label for="taskInput">Task / Case override</label>
           <input id="taskInput" placeholder="Optional case id" />
           <div style="height: 12px"></div>
@@ -2066,17 +2203,17 @@ function htmlPage(port: number) {
         </div>
 
         <div class="panel">
-          <h2>Execution Board</h2>
+          <h2>Role Board</h2>
           <div id="laneBoard" class="lane-grid"></div>
         </div>
 
         <div class="two-col">
           <div class="panel">
-            <h3>Lane Tasks</h3>
+            <h3>Role Activity</h3>
             <div id="taskList" class="task-list"></div>
           </div>
           <div class="panel">
-            <h3>Task Detail</h3>
+            <h3>Activity Detail</h3>
             <pre id="taskDetail">Select a lane or task node to inspect the current execution unit.</pre>
           </div>
         </div>
@@ -2086,14 +2223,21 @@ function htmlPage(port: number) {
             <h3>Worker Metadata</h3>
             <dl>
               <dt>Target Repo</dt><dd id="targetRepo">n/a</dd>
+              <dt>Approval</dt><dd id="targetApproval">n/a</dd>
+              <dt>Profiled</dt><dd id="profileGeneratedAt">n/a</dd>
               <dt>Adapter</dt><dd id="adapterId">n/a</dd>
+              <dt>Active Role</dt><dd id="activeRole">n/a</dd>
+              <dt>Brief Source</dt><dd id="briefSource">n/a</dd>
               <dt>Active Lane</dt><dd id="activeLane">n/a</dd>
               <dt>Active Task</dt><dd id="activeTask">n/a</dd>
-              <dt>Subagents</dt><dd id="activeSubagents">0</dd>
+              <dt>Execution Activity</dt><dd id="activeSubagents">0</dd>
               <dt>Thread</dt><dd id="threadId">n/a</dd>
               <dt>Eval Class</dt><dd id="evaluationClass">n/a</dd>
               <dt>Retry</dt><dd id="evaluationRetryable">n/a</dd>
+              <dt>Recovery Role</dt><dd id="recoveryRole">n/a</dd>
+              <dt>Failure Owner</dt><dd id="failureOwner">n/a</dd>
               <dt>Checkpoint</dt><dd id="checkpointPath">n/a</dd>
+              <dt>Role Briefs</dt><dd id="roleBriefsPath">n/a</dd>
               <dt>Stdout</dt><dd id="stdoutPath">n/a</dd>
               <dt>Stderr</dt><dd id="stderrPath">n/a</dd>
             </dl>
@@ -2106,11 +2250,18 @@ function htmlPage(port: number) {
               <dt>Started</dt><dd id="startedAt">n/a</dd>
               <dt>Updated</dt><dd id="updatedAt">n/a</dd>
               <dt>Failure</dt><dd id="failureReason">n/a</dd>
+              <dt>Known Roles</dt><dd id="knownRoles">n/a</dd>
+              <dt>Handoffs</dt><dd id="allowedHandoffs">n/a</dd>
               <dt>Reconciled</dt><dd id="executionReconciled">n/a</dd>
               <dt>Context Budget</dt><dd id="contextBudget">n/a</dd>
               <dt>Artifact Root</dt><dd id="artifactRoot">n/a</dd>
             </dl>
           </div>
+        </div>
+
+        <div class="panel">
+          <h3>Current Role Boundary</h3>
+          <pre id="roleBoundaryText">No role boundary loaded.</pre>
         </div>
 
         <div class="split">
@@ -2156,6 +2307,7 @@ function htmlPage(port: number) {
       targets: [],
       targetId: null,
       selectedRunId: null,
+      selectedRoleId: null,
       selectedLane: null,
       selectedTaskId: null,
       selectedPlanStepId: null,
@@ -2164,11 +2316,15 @@ function htmlPage(port: number) {
       board: null,
       plan: null,
       direction: null,
+      briefs: null,
       pollHandle: null,
       busy: false,
     };
 
     const targetSelect = document.getElementById("targetSelect");
+    const profileRepoInput = document.getElementById("profileRepoInput");
+    const profileTargetIdInput = document.getElementById("profileTargetIdInput");
+    const profileLabelInput = document.getElementById("profileLabelInput");
     const taskInput = document.getElementById("taskInput");
     const modelInput = document.getElementById("modelInput");
     const runList = document.getElementById("runList");
@@ -2230,8 +2386,44 @@ function htmlPage(port: number) {
       return "pill " + (status || "");
     }
 
-    function laneIds() {
-      return ["planner", "executor", "evaluator", "handoff", "subagents"];
+    function roleKindLabel(kind) {
+      const labels = {
+        supervisor: "Supervisor",
+        strategy_planner: "Strategy Planner",
+        milestone_planner: "Milestone Planner",
+        case_planner: "Case Planner",
+        strategy_evaluator: "Strategy Evaluator",
+        milestone_evaluator: "Milestone Evaluator",
+        executor: "Executor",
+        runtime_operator: "Runtime Operator",
+        environment_remediator: "Environment Remediator",
+        case_evaluator: "Case Evaluator",
+        handoff_recorder: "Handoff Recorder",
+        state_reconciler: "State Reconciler",
+      };
+      return labels[kind] || kind || "n/a";
+    }
+
+    function tasksForRole(board, role) {
+      if (!board || !role) {
+        return [];
+      }
+      if (role.kind === "supervisor") {
+        return board.tasks;
+      }
+      if (role.group === "planning") {
+        return board.tasks.filter((task) => task.lane === "planner");
+      }
+      if (role.group === "execution") {
+        return board.tasks.filter((task) => task.lane === "executor" || task.lane === "subagents");
+      }
+      if (role.group === "env_ops") {
+        return board.tasks.filter((task) => task.lane === "executor" || task.lane === "subagents");
+      }
+      if (role.kind === "case_evaluator") {
+        return board.tasks.filter((task) => task.lane === "evaluator");
+      }
+      return board.tasks.filter((task) => task.lane === "handoff" || task.lane === "evaluator");
     }
 
     function escapeHtml(value) {
@@ -2245,6 +2437,32 @@ function htmlPage(port: number) {
 
     function formatMultiline(value) {
       return escapeHtml(value || "").replace(/\n/g, "<br />");
+    }
+
+    function formatRoleBoundaryText(packet) {
+      if (!packet || !packet.brief) {
+        return "No role boundary loaded.";
+      }
+      const brief = packet.brief;
+      const visible = packet.visibleContext || {};
+      const blocks = [
+        "Role: " + (packet.role?.label || "n/a"),
+        "Mission: " + (brief.mission || "n/a"),
+        "",
+        "Responsibilities:",
+        ...(Array.isArray(brief.responsibilities) && brief.responsibilities.length > 0 ? brief.responsibilities.map((item) => "- " + item) : ["- none"]),
+        "",
+        "Non-goals:",
+        ...(Array.isArray(brief.nonGoals) && brief.nonGoals.length > 0 ? brief.nonGoals.map((item) => "- " + item) : ["- none"]),
+        "",
+        "Visible context:",
+        ...(visible.contractSummary ? ["- Contract: " + visible.contractSummary] : []),
+        ...(visible.strategySummary ? ["- Strategy: " + visible.strategySummary] : []),
+        ...(visible.milestoneSummary ? ["- Milestone: " + visible.milestoneSummary] : []),
+        ...(visible.latestEvaluationSummary ? ["- Latest evaluation: " + visible.latestEvaluationSummary] : []),
+        ...(visible.latestCheckpoint ? ["- Latest checkpoint: " + visible.latestCheckpoint] : []),
+      ];
+      return blocks.join("\n");
     }
 
     function directionCases() {
@@ -2337,7 +2555,7 @@ function htmlPage(port: number) {
       state.targets.forEach((target) => {
         const option = document.createElement("option");
         option.value = target.id;
-        option.textContent = target.label + " (" + target.id + ")";
+        option.textContent = target.label + " (" + target.id + ") [" + (target.approvalState || "approved") + "]";
         targetSelect.appendChild(option);
       });
       state.targetId = state.targets[0]?.id ?? null;
@@ -2368,6 +2586,7 @@ function htmlPage(port: number) {
           '<div class="run-summary">' + (run.summary || "No summary recorded.") + '</div>';
         item.addEventListener("click", async () => {
           state.selectedRunId = run.runId;
+          state.selectedRoleId = null;
           state.selectedLane = null;
           state.selectedTaskId = null;
           state.selectedPlanStepId = null;
@@ -2540,16 +2759,29 @@ function htmlPage(port: number) {
       badge.textContent = worker.state || "idle";
       document.getElementById("summaryText").textContent = worker.latestSummary || "No summary recorded.";
       document.getElementById("targetRepo").textContent = payload.status.targetRepoRoot;
+      document.getElementById("targetApproval").textContent = payload.status.approvalState || "approved";
+      document.getElementById("profileGeneratedAt").textContent = payload.status.profileGeneratedAt || "n/a";
       document.getElementById("adapterId").textContent = worker.adapterId || "n/a";
+      document.getElementById("activeRole").textContent = payload.status.activeRoleLabel || roleKindLabel(payload.status.activeRole) || "n/a";
+      document.getElementById("briefSource").textContent = payload.status.activeRoleBrief?.briefSource
+        ? [payload.status.activeRoleBrief.briefSource.base, payload.status.activeRoleBrief.briefSource.project].filter(Boolean).join(" + ")
+        : "n/a";
       document.getElementById("activeLane").textContent = payload.status.activeLane || "n/a";
       document.getElementById("activeTask").textContent = payload.status.activeTask ? payload.status.activeTask.title : (worker.activeTaskTitle || worker.activeTaskId || "n/a");
-      document.getElementById("activeSubagents").textContent = String(payload.status.activeSubagentCount || 0);
+      document.getElementById("activeSubagents").textContent = String(payload.status.executionTelemetryCount || payload.status.activeSubagentCount || 0);
       document.getElementById("threadId").textContent = worker.threadId || "n/a";
       document.getElementById("evaluationClass").textContent = payload.status.latestEvaluation?.failureClass || "n/a";
       document.getElementById("evaluationRetryable").textContent = payload.status.latestEvaluation
         ? String(Boolean(payload.status.latestEvaluation.retryable))
         : "n/a";
+      document.getElementById("recoveryRole").textContent = payload.status.latestFailureEnvelope?.suggestedRecoveryRole
+        ? roleKindLabel(payload.status.latestFailureEnvelope.suggestedRecoveryRole)
+        : "n/a";
+      document.getElementById("failureOwner").textContent = payload.status.latestFailureEnvelope?.ownerRole
+        ? roleKindLabel(payload.status.latestFailureEnvelope.ownerRole)
+        : "n/a";
       document.getElementById("checkpointPath").textContent = worker.latestCheckpoint || "n/a";
+      document.getElementById("roleBriefsPath").textContent = payload.status.roleBriefsPath || "n/a";
       document.getElementById("stdoutPath").textContent = payload.status.logs.stdoutPath || "n/a";
       document.getElementById("stderrPath").textContent = payload.status.logs.stderrPath || "n/a";
       document.getElementById("liveStatus").textContent = live.status || "n/a";
@@ -2557,12 +2789,19 @@ function htmlPage(port: number) {
       document.getElementById("startedAt").textContent = live.startedAt || "n/a";
       document.getElementById("updatedAt").textContent = live.updatedAt || "n/a";
       document.getElementById("failureReason").textContent = live.failureReason || "n/a";
+      document.getElementById("knownRoles").textContent = Array.isArray(payload.status.activeRoleBrief?.knownRoles)
+        ? payload.status.activeRoleBrief.knownRoles.map((item) => roleKindLabel(item)).join(", ")
+        : "n/a";
+      document.getElementById("allowedHandoffs").textContent = Array.isArray(payload.status.activeRoleBrief?.allowedHandoffs)
+        ? payload.status.activeRoleBrief.allowedHandoffs.map((item) => roleKindLabel(item)).join(", ")
+        : "n/a";
       document.getElementById("executionReconciled").textContent = payload.status.executionReconciled ? "yes" : "no";
       document.getElementById("contextBudget").textContent = payload.status.plannerContextBudget
         ? ((payload.status.plannerContextBudget.totalIncludedBytes || 0) + " / " + (payload.status.plannerContextBudget.maxContextBytes || 0)
             + (payload.status.plannerContextBudget.truncated ? " (trimmed)" : ""))
         : "n/a";
       document.getElementById("artifactRoot").textContent = payload.status.artifactRoot || "n/a";
+      document.getElementById("roleBoundaryText").textContent = formatRoleBoundaryText(payload.status.activeRoleContext);
       document.getElementById("stdoutTail").textContent = payload.status.logs.stdoutTail || "";
       document.getElementById("stderrTail").textContent = payload.status.logs.stderrTail || "";
       document.getElementById("boardJson").textContent = JSON.stringify(payload.status.board || {}, null, 2);
@@ -2586,21 +2825,26 @@ function htmlPage(port: number) {
     function renderLaneBoard(board) {
       laneBoard.innerHTML = "";
       if (!board) {
-        laneBoard.innerHTML = '<div class="muted">No board data yet.</div>';
+        laneBoard.innerHTML = '<div class="muted">No role data yet.</div>';
         return;
       }
-      laneIds().forEach((laneId) => {
-        const lane = board.lanes[laneId];
+      const roles = Array.isArray(board.roleInstances) ? board.roleInstances : [];
+      if (roles.length === 0) {
+        laneBoard.innerHTML = '<div class="muted">No role data yet.</div>';
+        return;
+      }
+      roles.forEach((role) => {
+        const tasks = tasksForRole(board, role);
         const card = document.createElement("button");
         card.type = "button";
-        card.className = "lane-card" + (state.selectedLane === laneId ? " active" : "");
+        card.className = "lane-card" + (state.selectedRoleId === role.id ? " active" : "");
         card.innerHTML =
-          '<div class="lane-top"><div class="lane-name">' + lane.label + '</div><span class="' + pillClass(lane.status) + '">' + lane.status + '</span></div>' +
-          '<div class="lane-meta">Tasks: ' + lane.totalTasks + ' | Running: ' + lane.runningTasks + ' | Done: ' + lane.completedTasks + ' | Failed: ' + lane.failedTasks + '</div>' +
-          '<div class="lane-meta" style="margin-top:8px;">Active: ' + (lane.activeTaskTitle || "n/a") + '</div>';
+          '<div class="lane-top"><div class="lane-name">' + escapeHtml(role.label) + '</div><span class="' + pillClass(role.state) + '">' + escapeHtml(role.state) + '</span></div>' +
+          '<div class="lane-meta">Group: ' + escapeHtml(role.group) + ' | Tasks: ' + String(tasks.length) + ' | Parent: ' + escapeHtml(role.parentRoleId || "none") + '</div>' +
+          '<div class="lane-meta" style="margin-top:8px;">Active: ' + escapeHtml(role.summary || "No summary recorded.") + '</div>';
         card.addEventListener("click", async () => {
-          state.selectedLane = laneId;
-          state.selectedTaskId = lane.activeTaskId || null;
+          state.selectedRoleId = role.id;
+          state.selectedTaskId = tasks[0]?.id || null;
           renderLaneBoard(board);
           renderTaskList(board);
           await refreshTaskDetail();
@@ -2615,12 +2859,17 @@ function htmlPage(port: number) {
         taskList.innerHTML = '<div class="muted">No task data yet.</div>';
         return;
       }
-      const laneId = state.selectedLane || board.activeLane || "planner";
-      const tasks = board.tasks.filter((task) => task.lane === laneId);
+      const roles = Array.isArray(board.roleInstances) ? board.roleInstances : [];
+      const selectedRole = roles.find((role) => role.id === state.selectedRoleId)
+        || roles.find((role) => role.kind === board.activeRole)
+        || roles[0]
+        || null;
+      const tasks = tasksForRole(board, selectedRole);
       if (tasks.length === 0) {
-        taskList.innerHTML = '<div class="muted">No task nodes for this lane yet.</div>';
+        taskList.innerHTML = '<div class="muted">No task nodes for this role yet.</div>';
         return;
       }
+      state.selectedRoleId = selectedRole?.id || null;
       if (!state.selectedTaskId || !tasks.some((task) => task.id === state.selectedTaskId)) {
         state.selectedTaskId = tasks[0].id;
       }
@@ -2763,8 +3012,9 @@ function htmlPage(port: number) {
       ]);
       state.board = boardPayload.board;
       state.plan = planPayload.plan;
-      if (!state.selectedLane || !state.board.lanes[state.selectedLane]) {
-        state.selectedLane = state.board.activeLane || laneIds().find((laneId) => state.board.lanes[laneId].totalTasks > 0) || "planner";
+      const roles = Array.isArray(state.board.roleInstances) ? state.board.roleInstances : [];
+      if (!state.selectedRoleId || !roles.some((role) => role.id === state.selectedRoleId)) {
+        state.selectedRoleId = roles.find((role) => role.kind === state.board.activeRole)?.id || roles[0]?.id || null;
       }
       renderLaneBoard(state.board);
       renderTaskList(state.board);
@@ -2800,6 +3050,7 @@ function htmlPage(port: number) {
         showToast(payload.message || (action + " completed"));
         if (payload.runId) {
           state.selectedRunId = payload.runId;
+          state.selectedRoleId = null;
           state.selectedLane = null;
           state.selectedTaskId = null;
           state.selectedPlanStepId = null;
@@ -2861,6 +3112,56 @@ function htmlPage(port: number) {
       }
     }
 
+    async function approveSelectedTarget() {
+      if (!state.targetId) return;
+      try {
+        setBusy(true);
+        const payload = await api("/api/targets/" + encodeURIComponent(state.targetId) + "/approve", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        state.briefs = payload.briefs || state.briefs;
+        showToast(payload.message || "Target approved.");
+        await refreshAll();
+      } catch (error) {
+        showToast(error.message || String(error), true);
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function profileTargetRepo() {
+      try {
+        setBusy(true);
+        const payload = await api("/api/targets/profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            profile: {
+              repo: profileRepoInput.value,
+              targetId: profileTargetIdInput.value,
+              label: profileLabelInput.value,
+            },
+          }),
+        });
+        showToast(payload.message || "Target draft generated.");
+        profileRepoInput.value = "";
+        profileTargetIdInput.value = "";
+        profileLabelInput.value = "";
+        await loadTargets();
+        if (payload.target?.id) {
+          state.targetId = payload.target.id;
+          targetSelect.value = payload.target.id;
+        }
+        await refreshAll();
+      } catch (error) {
+        showToast(error.message || String(error), true);
+      } finally {
+        setBusy(false);
+      }
+    }
+
     async function refreshAll() {
       await refreshDirection();
       await refreshStatus();
@@ -2873,6 +3174,7 @@ function htmlPage(port: number) {
     targetSelect.addEventListener("change", async () => {
       state.targetId = targetSelect.value;
       state.selectedRunId = null;
+      state.selectedRoleId = null;
       state.selectedLane = null;
       state.selectedTaskId = null;
       state.selectedPlanStepId = null;
@@ -2902,6 +3204,14 @@ function htmlPage(port: number) {
 
     document.getElementById("stopBtn").addEventListener("click", async () => {
       await performAction("stop");
+    });
+
+    document.getElementById("approveTargetBtn").addEventListener("click", async () => {
+      await approveSelectedTarget();
+    });
+
+    document.getElementById("profileTargetBtn").addEventListener("click", async () => {
+      await profileTargetRepo();
     });
 
     document.getElementById("saveDirectionBtn").addEventListener("click", async () => {
@@ -3109,6 +3419,23 @@ async function handleAction(
   }
 }
 
+async function profileTargetFromDashboard(options: DashboardServerOptions, body: DashboardActionBody) {
+  const repo = trimNullable(body.profile?.repo);
+  if (!repo) {
+    throw new Error("Target profiling requires a repository path.");
+  }
+  const draft = await buildTargetProfileDraft(options.controlRepoRoot, {
+    repoPath: repo,
+    targetId: trimNullable(body.profile?.targetId),
+    label: trimNullable(body.profile?.label),
+  });
+  const target = await writeTargetProfileDraft(options.controlRepoRoot, draft, options.targetRegistryPath);
+  return {
+    target,
+    briefs: await readRoleBriefData(options, target.id, "supervisor"),
+  };
+}
+
 export async function startDashboardServer(options: DashboardServerOptions) {
   const server = createServer(async (request, response) => {
     try {
@@ -3130,8 +3457,33 @@ export async function startDashboardServer(options: DashboardServerOptions) {
         return;
       }
 
+      if (method === "POST" && segments.length === 3 && segments[0] === "api" && segments[1] === "targets" && segments[2] === "profile") {
+        const body = await parseBody(request);
+        const result = await profileTargetFromDashboard(options, body);
+        json(response, 200, {
+          ok: true,
+          message: `Generated target draft for ${result.target.id}. Approve it before starting harness work.`,
+          target: result.target,
+          briefs: result.briefs,
+        });
+        return;
+      }
+
       if (segments.length >= 4 && segments[0] === "api" && segments[1] === "targets") {
         const targetId = decodeURIComponent(segments[2]);
+
+        if (method === "GET" && segments.length === 4 && segments[3] === "briefs") {
+          const args = baseArgs(options, targetId);
+          const { status } = await getEffectiveWorkerStatus(options.controlRepoRoot, args);
+          json(response, 200, {
+            briefs: await readRoleBriefData(
+              options,
+              targetId,
+              (status.activeRole ?? "supervisor") as typeof ALL_ROLE_KINDS[number],
+            ),
+          });
+          return;
+        }
 
         if (method === "GET" && segments.length === 4 && segments[3] === "status") {
           json(response, 200, {
@@ -3207,6 +3559,16 @@ export async function startDashboardServer(options: DashboardServerOptions) {
         if (method === "POST" && segments.length === 4) {
           const action = segments[3];
           const body = await parseBody(request);
+          if (action === "approve") {
+            const target = await approveTarget(options.controlRepoRoot, targetId, options.targetRegistryPath);
+            json(response, 200, {
+              ok: true,
+              message: `Approved ${target.id}. Harness runs can start now.`,
+              target,
+              briefs: await readRoleBriefData(options, targetId, "supervisor"),
+            });
+            return;
+          }
           if (action === "direction") {
             const result = await updateDirectionData(options, targetId, body);
             json(response, 200, {

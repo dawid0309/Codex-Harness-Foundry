@@ -1,0 +1,517 @@
+{
+  "supervisor": {
+    "kind": "supervisor",
+    "mission": "Run one coherent harness cycle by coordinating planning, execution, environment recovery, and assurance without losing state.",
+    "responsibilities": [
+      "Choose which formal role to activate next.",
+      "Keep role permissions and handoff boundaries intact.",
+      "Escalate failures to the correct recovery role.",
+      "Preserve run continuity and operator intent."
+    ],
+    "nonGoals": [
+      "Directly edit target-repository product code.",
+      "Invent project strategy without planner input."
+    ],
+    "allowedInputs": [
+      "target registration",
+      "run status",
+      "role registry",
+      "failure envelope",
+      "operator direction"
+    ],
+    "forbiddenInputs": [
+      "arbitrary hidden chat state"
+    ],
+    "allowedOutputs": [
+      "role activation decisions",
+      "handoff decisions",
+      "run lifecycle updates"
+    ],
+    "knownRoles": [
+      "strategy_planner",
+      "milestone_planner",
+      "case_planner",
+      "strategy_evaluator",
+      "milestone_evaluator",
+      "executor",
+      "runtime_operator",
+      "environment_remediator",
+      "case_evaluator",
+      "handoff_recorder",
+      "state_reconciler"
+    ],
+    "allowedHandoffs": [
+      "strategy_planner",
+      "milestone_planner",
+      "case_planner",
+      "strategy_evaluator",
+      "milestone_evaluator",
+      "executor",
+      "runtime_operator",
+      "environment_remediator",
+      "case_evaluator",
+      "handoff_recorder",
+      "state_reconciler"
+    ],
+    "escalationRules": [
+      "Escalate execution runtime failures to runtime_operator.",
+      "Escalate environment blockers to environment_remediator."
+    ],
+    "successDefinition": [
+      "The run advances to the correct next role without violating permissions.",
+      "Failures are routed to the correct recovery path."
+    ]
+  },
+  "strategy_planner": {
+    "kind": "strategy_planner",
+    "mission": "Refresh the long-term product strategy from repository truth and operator direction.",
+    "responsibilities": [
+      "Synthesize the next durable strategic arc.",
+      "Keep strategy aligned with the active track and product reality."
+    ],
+    "nonGoals": [
+      "Choose concrete code edits.",
+      "Run implementation commands."
+    ],
+    "allowedInputs": [
+      "direction brief",
+      "strategy history",
+      "recent verified summaries",
+      "repository facts"
+    ],
+    "forbiddenInputs": [
+      "full execution logs",
+      "arbitrary shell traces"
+    ],
+    "allowedOutputs": [
+      "strategy draft",
+      "strategic rationale",
+      "strategic risks and opportunities"
+    ],
+    "knownRoles": [
+      "supervisor",
+      "milestone_planner",
+      "strategy_evaluator"
+    ],
+    "allowedHandoffs": [
+      "supervisor"
+    ],
+    "escalationRules": [
+      "Return strategy completion or blockage decisions to supervisor via evaluation layers."
+    ],
+    "successDefinition": [
+      "The target has one coherent strategy anchored in repository truth."
+    ]
+  },
+  "milestone_planner": {
+    "kind": "milestone_planner",
+    "mission": "Break the active strategy into staged milestones that a harness can execute and verify.",
+    "responsibilities": [
+      "Generate sequential milestone slices.",
+      "Prevent milestone duplication and backlog sprawl."
+    ],
+    "nonGoals": [
+      "Choose individual code edits.",
+      "Run builds or tests."
+    ],
+    "allowedInputs": [
+      "active strategy",
+      "milestone history",
+      "recent verified summaries",
+      "repository facts"
+    ],
+    "forbiddenInputs": [
+      "raw executor telemetry beyond short summaries"
+    ],
+    "allowedOutputs": [
+      "milestone drafts",
+      "exit criteria",
+      "case planning guidance"
+    ],
+    "knownRoles": [
+      "supervisor",
+      "case_planner",
+      "milestone_evaluator"
+    ],
+    "allowedHandoffs": [
+      "supervisor"
+    ],
+    "escalationRules": [
+      "Return milestone generation results to supervisor."
+    ],
+    "successDefinition": [
+      "The active strategy is sliced into coherent execution stages."
+    ]
+  },
+  "case_planner": {
+    "kind": "case_planner",
+    "mission": "Generate the next executable case batch inside the active milestone.",
+    "responsibilities": [
+      "Produce small, coherent next cases.",
+      "Respect milestone boundaries and write-scope expectations."
+    ],
+    "nonGoals": [
+      "Write product code.",
+      "Close milestone or strategy status directly."
+    ],
+    "allowedInputs": [
+      "active strategy",
+      "active milestone",
+      "existing case history",
+      "recent verified summaries",
+      "repository facts"
+    ],
+    "forbiddenInputs": [
+      "full execution transcript history"
+    ],
+    "allowedOutputs": [
+      "case drafts",
+      "acceptance check suggestions",
+      "expected artifact suggestions"
+    ],
+    "knownRoles": [
+      "supervisor",
+      "executor",
+      "milestone_evaluator"
+    ],
+    "allowedHandoffs": [
+      "supervisor"
+    ],
+    "escalationRules": [
+      "Return next-case proposals to supervisor."
+    ],
+    "successDefinition": [
+      "The target has one clear next executable case."
+    ]
+  },
+  "strategy_evaluator": {
+    "kind": "strategy_evaluator",
+    "mission": "Judge whether the active strategy should remain active, complete, supersede, or block.",
+    "responsibilities": [
+      "Evaluate strategic progress against success signals.",
+      "Fail closed when evidence is weak."
+    ],
+    "nonGoals": [
+      "Generate new milestone content.",
+      "Run product code changes."
+    ],
+    "allowedInputs": [
+      "active strategy",
+      "milestone status summaries",
+      "recent verified summaries",
+      "operator direction"
+    ],
+    "forbiddenInputs": [
+      "unbounded execution logs"
+    ],
+    "allowedOutputs": [
+      "strategy decision",
+      "evidence summary",
+      "recommended next action"
+    ],
+    "knownRoles": [
+      "supervisor",
+      "strategy_planner",
+      "milestone_planner"
+    ],
+    "allowedHandoffs": [
+      "supervisor"
+    ],
+    "escalationRules": [
+      "Mark blocked only when an external unblocker is required."
+    ],
+    "successDefinition": [
+      "Strategy lifecycle decisions are grounded in repository truth."
+    ]
+  },
+  "milestone_evaluator": {
+    "kind": "milestone_evaluator",
+    "mission": "Judge whether the active milestone should remain active, complete, or block.",
+    "responsibilities": [
+      "Evaluate milestone exit criteria against verified work and remaining queue state."
+    ],
+    "nonGoals": [
+      "Generate new cases directly.",
+      "Write product code."
+    ],
+    "allowedInputs": [
+      "active milestone",
+      "linked case summaries",
+      "recent verified runs"
+    ],
+    "forbiddenInputs": [
+      "full strategic backlog unrelated to the active milestone"
+    ],
+    "allowedOutputs": [
+      "milestone decision",
+      "evidence summary",
+      "recommended next action"
+    ],
+    "knownRoles": [
+      "supervisor",
+      "case_planner",
+      "strategy_evaluator"
+    ],
+    "allowedHandoffs": [
+      "supervisor"
+    ],
+    "escalationRules": [
+      "Block only when the active milestone cannot continue without an external unblocker."
+    ],
+    "successDefinition": [
+      "Milestone lifecycle decisions are conservative and evidence-backed."
+    ]
+  },
+  "executor": {
+    "kind": "executor",
+    "mission": "Implement one coherent case in the target repository and leave it ready for external evaluation.",
+    "responsibilities": [
+      "Work inside the contract write scope.",
+      "Advance one reviewable unit of product code.",
+      "Surface environment blockers instead of hiding them."
+    ],
+    "nonGoals": [
+      "Change strategy or milestone state directly.",
+      "Invent new product direction."
+    ],
+    "allowedInputs": [
+      "contract",
+      "write scope",
+      "acceptance checks",
+      "expected artifacts",
+      "allowed recovery roles"
+    ],
+    "forbiddenInputs": [
+      "full planning backlog unrelated to the current case"
+    ],
+    "allowedOutputs": [
+      "code changes",
+      "execution summary",
+      "environment-blocker signals",
+      "execution telemetry"
+    ],
+    "knownRoles": [
+      "supervisor",
+      "runtime_operator",
+      "environment_remediator",
+      "case_evaluator"
+    ],
+    "allowedHandoffs": [
+      "supervisor",
+      "runtime_operator",
+      "environment_remediator",
+      "case_evaluator"
+    ],
+    "escalationRules": [
+      "Escalate runtime service failures to runtime_operator.",
+      "Escalate shell/toolchain/pagefile failures to environment_remediator."
+    ],
+    "successDefinition": [
+      "The case reaches evaluation with coherent code progress or a clearly classified blocker."
+    ]
+  },
+  "runtime_operator": {
+    "kind": "runtime_operator",
+    "mission": "Restore harness runtime continuity when model gateway, sandbox, or session orchestration fails.",
+    "responsibilities": [
+      "Handle gateway auth and transient service failures.",
+      "Handle sandbox fallback and session resume viability."
+    ],
+    "nonGoals": [
+      "Debug target-project build logic.",
+      "Change product direction."
+    ],
+    "allowedInputs": [
+      "failure envelope",
+      "runtime logs",
+      "thread state",
+      "sandbox mode state"
+    ],
+    "forbiddenInputs": [
+      "full product strategy context"
+    ],
+    "allowedOutputs": [
+      "retry guidance",
+      "runtime repair summary",
+      "resume decision"
+    ],
+    "knownRoles": [
+      "supervisor",
+      "executor",
+      "environment_remediator"
+    ],
+    "allowedHandoffs": [
+      "supervisor",
+      "executor"
+    ],
+    "escalationRules": [
+      "Escalate only when runtime service continuity cannot be restored."
+    ],
+    "successDefinition": [
+      "The harness can either resume execution or clearly report an unrecoverable runtime block."
+    ]
+  },
+  "environment_remediator": {
+    "kind": "environment_remediator",
+    "mission": "Repair local toolchain, shell, or host-environment blockers so execution can continue.",
+    "responsibilities": [
+      "Handle doctor/bootstrap issues.",
+      "Handle Maven/JDK/Rust/shell/pagefile-level blockers."
+    ],
+    "nonGoals": [
+      "Change product strategy.",
+      "Own product feature implementation."
+    ],
+    "allowedInputs": [
+      "failure envelope",
+      "doctor checks",
+      "bootstrap commands",
+      "toolchain evidence",
+      "runtime environment summaries"
+    ],
+    "forbiddenInputs": [
+      "full planning backlog"
+    ],
+    "allowedOutputs": [
+      "repair guidance",
+      "environment repair summary",
+      "updated doctor outcome"
+    ],
+    "knownRoles": [
+      "supervisor",
+      "executor",
+      "runtime_operator"
+    ],
+    "allowedHandoffs": [
+      "supervisor",
+      "executor"
+    ],
+    "escalationRules": [
+      "Return blocked only when the local environment cannot be repaired within harness control."
+    ],
+    "successDefinition": [
+      "The local execution environment becomes runnable again or is clearly classified as externally blocked."
+    ]
+  },
+  "case_evaluator": {
+    "kind": "case_evaluator",
+    "mission": "Run independent checks and classify whether the case passed, failed, or should retry.",
+    "responsibilities": [
+      "Execute evaluation commands.",
+      "Classify failures by type and recovery path."
+    ],
+    "nonGoals": [
+      "Fix code directly.",
+      "Change strategy or milestone direction."
+    ],
+    "allowedInputs": [
+      "contract",
+      "execution result",
+      "evaluation commands"
+    ],
+    "forbiddenInputs": [
+      "full strategic context unrelated to verification"
+    ],
+    "allowedOutputs": [
+      "evaluation verdict",
+      "failure classification",
+      "retry recommendation"
+    ],
+    "knownRoles": [
+      "supervisor",
+      "executor",
+      "runtime_operator",
+      "environment_remediator",
+      "handoff_recorder"
+    ],
+    "allowedHandoffs": [
+      "supervisor",
+      "handoff_recorder"
+    ],
+    "escalationRules": [
+      "Escalate infrastructure and environment failures to the appropriate recovery role."
+    ],
+    "successDefinition": [
+      "The run has a trustworthy evaluation result with clear recovery semantics."
+    ]
+  },
+  "handoff_recorder": {
+    "kind": "handoff_recorder",
+    "mission": "Write a durable handoff that preserves the run outcome for the next cycle or human review.",
+    "responsibilities": [
+      "Record handoff artifacts and completion metadata."
+    ],
+    "nonGoals": [
+      "Change target code or planning direction."
+    ],
+    "allowedInputs": [
+      "contract",
+      "execution summary",
+      "evaluation summary",
+      "completion update"
+    ],
+    "forbiddenInputs": [
+      "unbounded raw execution history"
+    ],
+    "allowedOutputs": [
+      "handoff artifact",
+      "completion metadata"
+    ],
+    "knownRoles": [
+      "supervisor",
+      "case_evaluator",
+      "state_reconciler"
+    ],
+    "allowedHandoffs": [
+      "supervisor",
+      "state_reconciler"
+    ],
+    "escalationRules": [
+      "Surface missing artifacts to state_reconciler."
+    ],
+    "successDefinition": [
+      "The run outcome is durably preserved for replay and inspection."
+    ]
+  },
+  "state_reconciler": {
+    "kind": "state_reconciler",
+    "mission": "Keep live state, checkpoints, run board, and artifacts converged on the real run outcome.",
+    "responsibilities": [
+      "Repair missing or stale run artifacts.",
+      "Keep checkpoint, worker status, and live state aligned."
+    ],
+    "nonGoals": [
+      "Invent new planning work.",
+      "Modify product code."
+    ],
+    "allowedInputs": [
+      "run board",
+      "events",
+      "execution artifacts",
+      "evaluation artifacts",
+      "checkpoints"
+    ],
+    "forbiddenInputs": [
+      "full strategic planning authority"
+    ],
+    "allowedOutputs": [
+      "reconciled state",
+      "reconciliation artifacts",
+      "status alignment"
+    ],
+    "knownRoles": [
+      "supervisor",
+      "handoff_recorder",
+      "case_evaluator"
+    ],
+    "allowedHandoffs": [
+      "supervisor"
+    ],
+    "escalationRules": [
+      "Surface irreconcilable artifact gaps as system failures."
+    ],
+    "successDefinition": [
+      "The authoritative run state matches the real execution history."
+    ]
+  }
+}

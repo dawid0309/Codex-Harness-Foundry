@@ -20,6 +20,7 @@ function defaultLiveState(spec: HarnessRunSpec): HarnessLiveState {
     latestCheckpoint: null,
     latestSummary: null,
     failureReason: null,
+    latestFailureEnvelope: null,
   };
 }
 
@@ -75,9 +76,12 @@ function defaultWorkerStatus(spec: HarnessRunSpec): HarnessWorkerStatus {
     adapterId: spec.adapterId,
     phase: null,
     activeLane: null,
+    activeRole: null,
+    activeRoleLabel: null,
     activeTaskId: null,
     activeTaskTitle: null,
     activeSubagentCount: 0,
+    executionTelemetryCount: 0,
     caseId: null,
     title: null,
     threadId: null,
@@ -85,6 +89,7 @@ function defaultWorkerStatus(spec: HarnessRunSpec): HarnessWorkerStatus {
     updatedAt: nowIso(),
     latestSummary: null,
     latestCheckpoint: null,
+    latestFailureEnvelope: null,
     stdoutLog: path.join(spec.artifactRoot, "worker-stdout.log").replaceAll("\\", "/"),
     stderrLog: path.join(spec.artifactRoot, "worker-stderr.log").replaceAll("\\", "/"),
   };

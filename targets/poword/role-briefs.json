@@ -1,0 +1,87 @@
+{
+  "targetId": "poword",
+  "generatedAt": "2026-04-26T00:00:00.000Z",
+  "updatedAt": "2026-04-26T00:00:00.000Z",
+  "generatedBy": "migration",
+  "directionBias": [
+    "Keep Poword centered on a lightweight Windows-wide text-selection translation product.",
+    "Treat Rust as the product trunk and long-term implementation center of gravity.",
+    "Treat Java as short-term compatibility infrastructure unless repository truth requires otherwise."
+  ],
+  "techBias": [
+    "Prefer Rust for new durable product surface area and Windows-native interaction loops.",
+    "Keep Java changes narrow, explicit, and migration-friendly."
+  ],
+  "repoFacts": {
+    "primaryLanguages": [
+      "Java",
+      "Rust"
+    ],
+    "buildSystems": [
+      "maven",
+      "cargo"
+    ],
+    "testEntrypoints": [
+      "src/test",
+      "cargo test"
+    ],
+    "docsSummary": [
+      "Poword is being steered toward a Windows-native overlay flow for translation and vocabulary capture.",
+      "The active direction prioritizes lightweight desktop behavior over browser-only extension coupling."
+    ]
+  },
+  "projectConstraints": [
+    "Keep all harness state outside the Poword repository.",
+    "Bias toward one coherent step of Windows-native product progress per harness cycle.",
+    "Do not expand the heavy desktop footprint when a smaller native path is available."
+  ],
+  "preferredChecks": [
+    "Run Java compile or Maven validation when touching legacy Java paths.",
+    "Run Cargo-oriented checks when touching Rust migration paths."
+  ],
+  "environmentHotspots": [
+    "Windows shell quoting and process launch behavior",
+    "JDK and Maven availability",
+    "Rust toolchain bootstrap via cargo/rustup"
+  ],
+  "roleOverrides": {
+    "strategy_planner": {
+      "directionBias": [
+        "Keep the strategy focused on Windows-wide product fit and Rust-mainline migration."
+      ]
+    },
+    "milestone_planner": {
+      "directionBias": [
+        "Sequence milestones so the Windows overlay loop lands before wider product expansion."
+      ]
+    },
+    "case_planner": {
+      "directionBias": [
+        "Prefer the next smallest implementable Rust-leaning slice that advances the overlay and vocabulary loop."
+      ]
+    },
+    "executor": {
+      "techBias": [
+        "When possible, move product logic toward Rust instead of deepening Java ownership."
+      ],
+      "projectConstraints": [
+        "Keep code changes reviewable and migration-friendly across Java and Rust boundaries."
+      ]
+    },
+    "runtime_operator": {
+      "environmentHotspots": [
+        "Local gateway availability and Windows sandbox execution behavior"
+      ]
+    },
+    "environment_remediator": {
+      "environmentHotspots": [
+        "Rust toolchain readiness, Maven command shape, and Windows-native process prerequisites"
+      ]
+    },
+    "case_evaluator": {
+      "preferredChecks": [
+        "Prefer evaluation evidence that confirms lightweight Windows-native behavior and migration-safe progress."
+      ]
+    }
+  }
+}

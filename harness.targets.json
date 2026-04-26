@@ -8,7 +8,9 @@
       "repoRoot": ".",
       "adapterId": "foundry",
       "adapterConfigPath": "targets/foundry/target.config.json",
-      "artifactRoot": "data/harness/targets/foundry"
+      "artifactRoot": "data/harness/targets/foundry",
+      "approvalState": "approved",
+      "profileGeneratedAt": null
     },
     "poword": {
       "id": "poword",
@@ -16,7 +18,10 @@
       "repoRoot": "../poword",
       "adapterId": "external-generic",
       "adapterConfigPath": "targets/poword/target.config.json",
-      "artifactRoot": "data/harness/targets/poword"
+      "artifactRoot": "data/harness/targets/poword",
+      "roleBriefsPath": "targets/poword/role-briefs.json",
+      "approvalState": "approved",
+      "profileGeneratedAt": null
     }
   }
 }

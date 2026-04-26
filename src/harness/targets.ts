@@ -27,7 +27,12 @@ export function resolveTargetRegistration(
     ...target,
     repoRoot: normalizePath(controlRepoRoot, target.repoRoot),
     adapterConfigPath: normalizePath(controlRepoRoot, target.adapterConfigPath),
+    roleBriefsPath: target.roleBriefsPath
+      ? normalizePath(controlRepoRoot, target.roleBriefsPath)
+      : normalizePath(controlRepoRoot, path.join(path.dirname(target.adapterConfigPath), "role-briefs.json")),
     artifactRoot: target.artifactRoot.replaceAll("\\", "/"),
+    approvalState: target.approvalState ?? "approved",
+    profileGeneratedAt: target.profileGeneratedAt ?? null,
   };
 }
 
@@ -79,4 +84,12 @@ export async function createRunSpec(input: {
     spec,
     target: resolved.target,
   };
+}
+
+export function assertTargetApproved(target: HarnessTargetRegistration, action: string) {
+  if ((target.approvalState ?? "approved") !== "approved") {
+    throw new Error(
+      `Target "${target.id}" is ${target.approvalState ?? "draft"} and cannot ${action} yet. Approve it first.`,
+    );
+  }
 }

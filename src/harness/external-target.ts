@@ -6,6 +6,7 @@ import path from "node:path";
 import { runCodex } from "./codex";
 import { NoReadyWorkError } from "./errors";
 import { runShellCommand } from "./process";
+import { composeRoleContextPacket, loadProjectRoleBriefOverlay, renderRoleContextForPrompt } from "./roles";
 import { nowIso } from "./time";
 import type {
   DoctorCheck,
@@ -42,6 +43,7 @@ import type {
   ProjectAdapterManifest,
   SprintContract,
   ExternalPlanningContextBudget,
+  HarnessRoleKind,
 } from "./types";
 
 const SNAPSHOT_LIMIT = 12_000;
@@ -419,6 +421,31 @@ function formatDirectionBrief(brief: ExternalDirectionBrief | undefined) {
   ];
 }
 
+async function loadRoleOverlay(context: HarnessContext) {
+  return loadProjectRoleBriefOverlay(context.target);
+}
+
+async function rolePromptSection(
+  context: HarnessContext,
+  kind: HarnessRoleKind,
+  visible: {
+    contractSummary?: string | null;
+    strategySummary?: string | null;
+    milestoneSummary?: string | null;
+    latestEvaluationSummary?: string | null;
+  } = {},
+) {
+  const overlay = await loadRoleOverlay(context);
+  return renderRoleContextForPrompt(composeRoleContextPacket({
+    kind,
+    projectOverlay: overlay,
+    contractSummary: visible.contractSummary ?? null,
+    strategySummary: visible.strategySummary ?? null,
+    milestoneSummary: visible.milestoneSummary ?? null,
+    latestEvaluationSummary: visible.latestEvaluationSummary ?? null,
+  }));
+}
+
 function extractJsonArray(text: string) {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -666,11 +693,16 @@ async function markCaseStatus(
   };
 }
 
-function promptForContract(config: ExternalTargetConfig, contract: SprintContract, resume: boolean) {
+async function promptForContract(context: HarnessContext, config: ExternalTargetConfig, contract: SprintContract, resume: boolean) {
   const directionNote = config.execution.directionNote?.trim();
+  const roleSection = await rolePromptSection(context, "executor", {
+    contractSummary: `${contract.caseId}: ${contract.title}. Goal: ${contract.goal}`,
+  });
   const base = resume ? config.execution.resumePrompt : config.execution.basePrompt;
   return [
     base,
+    "",
+    roleSection,
     "",
     ...formatDirectionBrief(config.directionBrief),
     ...(directionNote
@@ -1435,9 +1467,16 @@ function plannerPaths(context: HarnessContext, layer: ExternalPlanningLayer) {
   };
 }
 
-function buildStrategyPlannerPrompt(config: ExternalTargetConfig, planning: NormalizedExternalPlanningConfig) {
+async function buildStrategyPlannerPrompt(
+  context: HarnessContext,
+  config: ExternalTargetConfig,
+  planning: NormalizedExternalPlanningConfig,
+) {
+  const roleSection = await rolePromptSection(context, "strategy_planner");
   return [
     planning.strategy.basePrompt,
+    "",
+    roleSection,
     "",
     ...formatDirectionBrief(config.directionBrief),
     ...normalizePlannerNotes(planning.strategy.directionNote),
@@ -1468,9 +1507,16 @@ function buildStrategyPlannerPrompt(config: ExternalTargetConfig, planning: Norm
   ].join("\n");
 }
 
-function buildMilestonePlannerPrompt(config: ExternalTargetConfig, planning: NormalizedExternalPlanningConfig) {
+async function buildMilestonePlannerPrompt(
+  context: HarnessContext,
+  config: ExternalTargetConfig,
+  planning: NormalizedExternalPlanningConfig,
+) {
+  const roleSection = await rolePromptSection(context, "milestone_planner");
   return [
     planning.milestones.basePrompt,
+    "",
+    roleSection,
     "",
     ...formatDirectionBrief(config.directionBrief),
     ...normalizePlannerNotes(planning.milestones.directionNote),
@@ -1500,9 +1546,21 @@ function buildMilestonePlannerPrompt(config: ExternalTargetConfig, planning: Nor
   ].join("\n");
 }
 
-function buildCasePlannerPrompt(config: ExternalTargetConfig, planning: NormalizedExternalPlanningConfig) {
+async function buildCasePlannerPrompt(
+  context: HarnessContext,
+  config: ExternalTargetConfig,
+  planning: NormalizedExternalPlanningConfig,
+  strategy: ExternalTargetStrategy,
+  activeMilestone: ExternalTargetMilestone,
+) {
+  const roleSection = await rolePromptSection(context, "case_planner", {
+    strategySummary: `${strategy.id}: ${strategy.title}`,
+    milestoneSummary: `${activeMilestone.id}: ${activeMilestone.title}`,
+  });
   return [
     planning.cases.basePrompt,
+    "",
+    roleSection,
     "",
     ...formatDirectionBrief(config.directionBrief),
     ...normalizePlannerNotes(planning.cases.directionNote),
@@ -1538,9 +1596,19 @@ function buildCasePlannerPrompt(config: ExternalTargetConfig, planning: Normaliz
   ].join("\n");
 }
 
-function buildStrategyEvaluatorPrompt(config: ExternalTargetConfig, planning: NormalizedExternalPlanningConfig) {
+async function buildStrategyEvaluatorPrompt(
+  context: HarnessContext,
+  config: ExternalTargetConfig,
+  planning: NormalizedExternalPlanningConfig,
+  strategy: ExternalTargetStrategy,
+) {
+  const roleSection = await rolePromptSection(context, "strategy_evaluator", {
+    strategySummary: `${strategy.id}: ${strategy.title}`,
+  });
   return [
     planning.strategyEvaluator.basePrompt,
+    "",
+    roleSection,
     "",
     ...formatDirectionBrief(config.directionBrief),
     ...normalizePlannerNotes(planning.strategyEvaluator.directionNote),
@@ -1568,9 +1636,21 @@ function buildStrategyEvaluatorPrompt(config: ExternalTargetConfig, planning: No
   ].join("\n");
 }
 
-function buildMilestoneEvaluatorPrompt(config: ExternalTargetConfig, planning: NormalizedExternalPlanningConfig) {
+async function buildMilestoneEvaluatorPrompt(
+  context: HarnessContext,
+  config: ExternalTargetConfig,
+  planning: NormalizedExternalPlanningConfig,
+  strategy: ExternalTargetStrategy,
+  milestone: ExternalTargetMilestone,
+) {
+  const roleSection = await rolePromptSection(context, "milestone_evaluator", {
+    strategySummary: `${strategy.id}: ${strategy.title}`,
+    milestoneSummary: `${milestone.id}: ${milestone.title}`,
+  });
   return [
     planning.milestoneEvaluator.basePrompt,
+    "",
+    roleSection,
     "",
     ...formatDirectionBrief(config.directionBrief),
     ...normalizePlannerNotes(planning.milestoneEvaluator.directionNote),
@@ -2170,7 +2250,7 @@ async function runStrategyEvaluator(
   await writeDeterministicEvaluationArtifacts(
     context,
     "planner/strategy",
-    buildStrategyEvaluatorPrompt(config, planning),
+    await buildStrategyEvaluatorPrompt(context, config, planning, strategy),
     contextPacket,
     evaluation,
   );
@@ -2207,7 +2287,7 @@ async function runMilestoneEvaluator(
   await writeDeterministicEvaluationArtifacts(
     context,
     `planner/milestones/${milestone.id}`,
-    buildMilestoneEvaluatorPrompt(config, planning),
+    await buildMilestoneEvaluatorPrompt(context, config, planning, strategy, milestone),
     contextPacket,
     evaluation,
   );
@@ -2238,7 +2318,7 @@ async function runStrategyPlanner(
     planning,
     config,
     "strategy",
-    buildStrategyPlannerPrompt(config, planning),
+    await buildStrategyPlannerPrompt(context, config, planning),
     contextPacket,
     planning.strategy.model,
   );
@@ -2289,7 +2369,7 @@ async function runMilestonePlanner(
     planning,
     config,
     "milestones",
-    buildMilestonePlannerPrompt(config, planning),
+    await buildMilestonePlannerPrompt(context, config, planning),
     contextPacket,
     planning.milestones.model,
   );
@@ -2363,7 +2443,7 @@ async function runCasePlannerReplenishment(
     planning,
     config,
     "cases",
-    buildCasePlannerPrompt(config, planning),
+    await buildCasePlannerPrompt(context, config, planning, strategy, activeMilestone),
     contextPacket,
     planning.cases.model,
   );
@@ -2786,7 +2866,7 @@ export function createExternalTargetAdapter(manifest: ProjectAdapterManifest): H
     },
     async execute(context: HarnessContext & { contract: SprintContract; threadId: string | null; resume: boolean }) {
       const config = await loadExternalTargetConfig(context);
-      const prompt = promptForContract(config, context.contract, context.resume);
+      const prompt = await promptForContract(context, config, context.contract, context.resume);
       const promptFile = context.artifactStore.resolve(context.resume ? "prompts/resume.md" : "prompts/execute.md");
       const stdoutLog = context.artifactStore.resolve(context.resume ? "execution/resume.stdout.log" : "execution/run.stdout.log");
       const stderrLog = context.artifactStore.resolve(context.resume ? "execution/resume.stderr.log" : "execution/run.stderr.log");

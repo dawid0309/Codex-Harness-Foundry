@@ -5,11 +5,12 @@ import path from "node:path";
 
 import { FileArtifactStore } from "./artifact-store";
 import { doctorHarness, evaluateHarness, peekNextHarnessWork, reconcileHarnessRun, resumeHarness, runHarness } from "./engine";
+import { roleLabel } from "./roles";
 import { readRunBoard, readRunEvents, rebuildAndWriteRunBoard } from "./run-board";
 import { JsonStateBackend, JsonWorkerStatusBackend } from "./state-backend";
 import { runShellCommand } from "./process";
 import { createRunId, nowIso } from "./time";
-import { createRunSpec } from "./targets";
+import { assertTargetApproved, createRunSpec, resolveTargetForSpec } from "./targets";
 import type {
   DoctorCheck,
   ExternalTargetConfig,
@@ -19,6 +20,26 @@ import type {
   HarnessWorkerStatus,
 } from "./types";
 
+function defaultRoleForLane(lane: HarnessWorkerStatus["activeLane"]): HarnessWorkerStatus["activeRole"] {
+  switch (lane) {
+    case "planner":
+      return "case_planner";
+    case "executor":
+    case "subagents":
+      return "executor";
+    case "evaluator":
+      return "case_evaluator";
+    case "handoff":
+      return "handoff_recorder";
+    default:
+      return "supervisor";
+  }
+}
+
+function resolveWorkerRole(role: HarnessWorkerStatus["activeRole"] | null | undefined, lane: HarnessWorkerStatus["activeLane"] | null | undefined) {
+  return role ?? defaultRoleForLane(lane ?? null) ?? "supervisor";
+}
+
 export type HarnessCliArgs = {
   adapter: string | null;
   manifest: string;
@@ -27,6 +48,8 @@ export type HarnessCliArgs = {
   runId: string | null;
   model: string | null;
   task: string | null;
+  repo: string | null;
+  label: string | null;
 };
 
 export function defaultCliArgs(): HarnessCliArgs {
@@ -38,6 +61,8 @@ export function defaultCliArgs(): HarnessCliArgs {
     runId: null,
     model: null,
     task: null,
+    repo: null,
+    label: null,
   };
 }
 
@@ -239,9 +264,12 @@ async function writeWorkerCycleStatus(input: {
     adapterId: input.spec.adapterId,
     phase: "plan",
     activeLane: "planner",
+    activeRole: "case_planner",
+    activeRoleLabel: roleLabel("case_planner"),
     activeTaskId: "lane:planner:main",
     activeTaskTitle: `Planning ${input.item.id}`,
     activeSubagentCount: 0,
+    executionTelemetryCount: 0,
     caseId: input.item.id,
     title: input.item.title,
     threadId: null,
@@ -249,6 +277,7 @@ async function writeWorkerCycleStatus(input: {
     updatedAt: nowIso(),
     latestSummary: input.latestSummary,
     latestCheckpoint: null,
+    latestFailureEnvelope: null,
     stdoutLog: logs.stdoutLog,
     stderrLog: logs.stderrLog,
   });
@@ -291,17 +320,23 @@ export async function enrichWorkerStatus(spec: HarnessRunSpec, status: HarnessWo
     ? await rebuildAndWriteRunBoard(liveSpec, artifactStore).catch(() => null)
     : await readRunBoard(artifactStore).catch(() => null);
   if (liveState.runId !== status.runId) {
+    const resolvedRole = resolveWorkerRole(board?.activeRole ?? status.activeRole, board?.activeLane ?? status.activeLane);
     return {
       ...status,
       updatedAt: board?.updatedAt ?? status.updatedAt,
       latestSummary: board?.latestSummary ?? status.latestSummary,
       activeLane: board?.activeLane ?? status.activeLane,
+      activeRole: resolvedRole,
+      activeRoleLabel: roleLabel(resolvedRole),
       activeTaskId: board?.activeNodeId ?? status.activeTaskId,
       activeTaskTitle: board?.tasks.find((task) => task.id === board.activeNodeId)?.title ?? status.activeTaskTitle,
       activeSubagentCount: board?.lanes.subagents.runningTasks ?? status.activeSubagentCount,
+      executionTelemetryCount: board?.executionTelemetry.runningTasks ?? status.executionTelemetryCount,
+      latestFailureEnvelope: board?.latestFailureEnvelope ?? status.latestFailureEnvelope,
     };
   }
 
+  const resolvedRole = resolveWorkerRole(board?.activeRole ?? status.activeRole, board?.activeLane ?? status.activeLane);
   return {
     ...status,
     targetId: status.targetId ?? liveState.targetId ?? spec.targetId,
@@ -315,9 +350,13 @@ export async function enrichWorkerStatus(spec: HarnessRunSpec, status: HarnessWo
     startedAt: liveState.startedAt ?? status.startedAt,
     updatedAt: board?.updatedAt ?? liveState.updatedAt ?? status.updatedAt,
     activeLane: board?.activeLane ?? status.activeLane,
+    activeRole: resolvedRole,
+    activeRoleLabel: roleLabel(resolvedRole),
     activeTaskId: board?.activeNodeId ?? status.activeTaskId,
     activeTaskTitle: board?.tasks.find((task) => task.id === board.activeNodeId)?.title ?? status.activeTaskTitle,
     activeSubagentCount: board?.lanes.subagents.runningTasks ?? status.activeSubagentCount,
+    executionTelemetryCount: board?.executionTelemetry.runningTasks ?? status.executionTelemetryCount,
+    latestFailureEnvelope: board?.latestFailureEnvelope ?? liveState.latestFailureEnvelope ?? status.latestFailureEnvelope,
   };
 }
 
@@ -413,9 +452,11 @@ export function formatWorkerStatus(status: HarnessWorkerStatus) {
     `Run ID: ${status.runId ?? "n/a"}`,
     `Adapter: ${status.adapterId ?? "n/a"}`,
     `Phase: ${status.phase ?? "n/a"}`,
+    `Active role: ${status.activeRoleLabel ?? (status.activeRole ? roleLabel(status.activeRole) : "n/a")}`,
     `Active lane: ${status.activeLane ?? "n/a"}`,
     `Active task: ${status.activeTaskTitle ?? status.activeTaskId ?? "n/a"}`,
     `Active subagents: ${status.activeSubagentCount}`,
+    `Execution activity: ${status.executionTelemetryCount}`,
     `Case ID: ${status.caseId ?? "n/a"}`,
     `Title: ${status.title ?? "n/a"}`,
     `Thread ID: ${status.threadId ?? "n/a"}`,
@@ -423,6 +464,7 @@ export function formatWorkerStatus(status: HarnessWorkerStatus) {
     `Updated: ${status.updatedAt}`,
     `Latest checkpoint: ${status.latestCheckpoint ?? "n/a"}`,
     `Latest summary: ${status.latestSummary ?? "n/a"}`,
+    `Failure envelope: ${status.latestFailureEnvelope ? JSON.stringify(status.latestFailureEnvelope) : "n/a"}`,
     `Stdout log: ${status.stdoutLog}`,
     `Stderr log: ${status.stderrLog}`,
   ];
@@ -432,6 +474,12 @@ export async function startBackgroundWorker(controlRepoRoot: string, mode: "run"
   const launch = await resolveWorkerLaunchPlan(controlRepoRoot, mode, args);
   const runId = launch.runId;
   const spec = await buildSpec(controlRepoRoot, args, runId);
+  const { target } = await resolveTargetForSpec({
+    controlRepoRoot,
+    targetRegistryPath: args.targetsFile,
+    targetId: spec.targetId,
+  });
+  assertTargetApproved(target, "start");
   const backend = new JsonWorkerStatusBackend(spec);
   const current = await backend.read();
 
@@ -453,9 +501,12 @@ export async function startBackgroundWorker(controlRepoRoot: string, mode: "run"
     adapterId: spec.adapterId,
     phase: "plan",
     activeLane: "planner",
+    activeRole: "case_planner",
+    activeRoleLabel: roleLabel("case_planner"),
     activeTaskId: "lane:planner:main",
     activeTaskTitle: "Checking worker prerequisites",
     activeSubagentCount: 0,
+    executionTelemetryCount: 0,
     caseId: null,
     title: null,
     threadId: null,
@@ -463,6 +514,7 @@ export async function startBackgroundWorker(controlRepoRoot: string, mode: "run"
     updatedAt: nowIso(),
     latestSummary: "Running doctor checks before worker start.",
     latestCheckpoint: null,
+    latestFailureEnvelope: null,
     stdoutLog: path.relative(controlRepoRoot, stdoutLog).replaceAll("\\", "/"),
     stderrLog: path.relative(controlRepoRoot, stderrLog).replaceAll("\\", "/"),
   });
@@ -486,9 +538,12 @@ export async function startBackgroundWorker(controlRepoRoot: string, mode: "run"
       adapterId: spec.adapterId,
       phase: "plan",
       activeLane: "planner",
+      activeRole: "environment_remediator",
+      activeRoleLabel: roleLabel("environment_remediator"),
       activeTaskId: "lane:planner:main",
       activeTaskTitle: "Worker prerequisite check failed",
       activeSubagentCount: 0,
+      executionTelemetryCount: 0,
       caseId: null,
       title: null,
       threadId: null,
@@ -496,6 +551,16 @@ export async function startBackgroundWorker(controlRepoRoot: string, mode: "run"
       updatedAt: nowIso(),
       latestSummary: message,
       latestCheckpoint: null,
+      latestFailureEnvelope: {
+        ownerRole: "environment_remediator",
+        escalateToRole: "environment_remediator",
+        suggestedRecoveryRole: "environment_remediator",
+        failureClass: "execution_environment_failure",
+        failureScope: "environment",
+        retryable: false,
+        blocking: true,
+        normalizedSummary: message,
+      },
       stdoutLog: path.relative(controlRepoRoot, stdoutLog).replaceAll("\\", "/"),
       stderrLog: path.relative(controlRepoRoot, stderrLog).replaceAll("\\", "/"),
     });
@@ -510,9 +575,12 @@ export async function startBackgroundWorker(controlRepoRoot: string, mode: "run"
     adapterId: spec.adapterId,
     phase: "plan",
     activeLane: "planner",
+    activeRole: "supervisor",
+    activeRoleLabel: roleLabel("supervisor"),
     activeTaskId: "lane:planner:main",
     activeTaskTitle: "Harness worker starting",
     activeSubagentCount: 0,
+    executionTelemetryCount: 0,
     caseId: null,
     title: null,
     threadId: null,
@@ -520,6 +588,7 @@ export async function startBackgroundWorker(controlRepoRoot: string, mode: "run"
     updatedAt: nowIso(),
     latestSummary: launch.launchSummary,
     latestCheckpoint: null,
+    latestFailureEnvelope: null,
     stdoutLog: path.relative(controlRepoRoot, stdoutLog).replaceAll("\\", "/"),
     stderrLog: path.relative(controlRepoRoot, stderrLog).replaceAll("\\", "/"),
   });
@@ -559,6 +628,8 @@ export async function startBackgroundWorker(controlRepoRoot: string, mode: "run"
     ...existing,
     state: "running",
     workerPid: child.pid ?? null,
+    activeRole: existing.activeRole ?? "supervisor",
+    activeRoleLabel: existing.activeRoleLabel ?? roleLabel(existing.activeRole ?? "supervisor"),
     latestSummary: launch.effectiveMode === "run"
       ? (launch.resumeSourceRunId
           ? `Previous run ${launch.resumeSourceRunId} already completed. Starting the next ready work item as ${runId}.`
@@ -610,6 +681,7 @@ export async function stopBackgroundWorker(controlRepoRoot: string, args: Harnes
         updatedAt: nowIso(),
         latestSummary: liveState.latestSummary ?? next.latestSummary,
         latestCheckpoint: liveState.latestCheckpoint ?? next.latestCheckpoint,
+        latestFailureEnvelope: liveState.latestFailureEnvelope ?? next.latestFailureEnvelope,
       } satisfies HarnessWorkerStatus;
       await backend.write(settled);
       return {
@@ -625,6 +697,8 @@ export async function stopBackgroundWorker(controlRepoRoot: string, args: Harnes
     workerPid: null,
     updatedAt: nowIso(),
     latestSummary: "Harness worker stopped by operator.",
+    activeRole: next.activeRole ?? "supervisor",
+    activeRoleLabel: next.activeRoleLabel ?? roleLabel(next.activeRole ?? "supervisor"),
   });
   await updateLiveStateToInterrupted(spec, next);
 
@@ -720,9 +794,12 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
     adapterId: spec.adapterId,
     phase: current.phase ?? "plan",
     activeLane: current.activeLane ?? "planner",
+    activeRole: resolveWorkerRole(current.activeRole, current.activeLane ?? "planner"),
+    activeRoleLabel: current.activeRoleLabel ?? roleLabel(resolveWorkerRole(current.activeRole, current.activeLane ?? "planner")),
     activeTaskId: current.activeTaskId ?? "lane:planner:main",
     activeTaskTitle: current.activeTaskTitle ?? (launch.effectiveMode === "run" ? "Harness cycle starting" : "Harness cycle resuming"),
     activeSubagentCount: current.activeSubagentCount ?? 0,
+    executionTelemetryCount: current.executionTelemetryCount ?? 0,
     startedAt: current.startedAt ?? workerStartedAt,
     latestSummary: launch.launchSummary,
   }));
@@ -760,9 +837,12 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
             adapterId: spec.adapterId,
             phase: completedCycles > 0 ? "handoff" : "plan",
             activeLane: completedCycles > 0 ? "handoff" : "planner",
+            activeRole: completedCycles > 0 ? "handoff_recorder" : "case_planner",
+            activeRoleLabel: roleLabel(completedCycles > 0 ? "handoff_recorder" : "case_planner"),
             activeTaskId: completedCycles > 0 ? "lane:handoff:main" : "lane:planner:main",
             activeTaskTitle: completedCycles > 0 ? "No ready work remains" : "Planner found no next work",
             activeSubagentCount: 0,
+            executionTelemetryCount: 0,
             caseId: null,
             title: null,
             threadId: null,
@@ -772,6 +852,7 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
               ? `Completed ${completedCycles} cycle(s). No ready work remains for ${spec.targetId}.`
               : `No ready work is available for ${spec.targetId}.`),
             latestCheckpoint: null,
+            latestFailureEnvelope: null,
             stdoutLog: logs.stdoutLog,
             stderrLog: logs.stderrLog,
           });
@@ -831,6 +912,10 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
           };
 
       const writeTerminalStatus = async (latestSummary: string) => {
+        const terminalRole = resolveWorkerRole(
+          board?.activeRole,
+          board?.activeLane ?? (effectiveLiveState.phase === "handoff" ? "handoff" : null),
+        );
         await backend.write({
           state: result.evaluation.passed ? "completed" : "failed",
           workerPid: null,
@@ -839,9 +924,12 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
           adapterId: result.spec.adapterId,
           phase: effectiveLiveState.phase,
           activeLane: board?.activeLane ?? null,
+          activeRole: terminalRole,
+          activeRoleLabel: roleLabel(terminalRole),
           activeTaskId: board?.activeNodeId ?? null,
           activeTaskTitle: board?.tasks.find((task) => task.id === board.activeNodeId)?.title ?? null,
           activeSubagentCount: board?.lanes.subagents.runningTasks ?? 0,
+          executionTelemetryCount: board?.executionTelemetry.runningTasks ?? 0,
           caseId: effectiveLiveState.caseId,
           title: effectiveLiveState.title,
           threadId: result.execution.threadId,
@@ -849,6 +937,7 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
           updatedAt: nowIso(),
           latestSummary,
           latestCheckpoint: effectiveLiveState.latestCheckpoint,
+          latestFailureEnvelope: board?.latestFailureEnvelope ?? effectiveLiveState.latestFailureEnvelope ?? null,
           stdoutLog: logs.stdoutLog,
           stderrLog: logs.stderrLog,
         });
@@ -871,9 +960,12 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
         adapterId: result.spec.adapterId,
         phase: "plan",
         activeLane: "planner",
+        activeRole: "supervisor",
+        activeRoleLabel: roleLabel("supervisor"),
         activeTaskId: "lane:planner:main",
         activeTaskTitle: `Planning next cycle after ${result.contract.caseId}`,
         activeSubagentCount: 0,
+        executionTelemetryCount: 0,
         caseId: null,
         title: null,
         threadId: null,
@@ -881,6 +973,7 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
         updatedAt: nowIso(),
         latestSummary: `Preparing next cycle after ${result.contract.caseId}.`,
         latestCheckpoint: null,
+        latestFailureEnvelope: null,
         stdoutLog: logs.stdoutLog,
         stderrLog: logs.stderrLog,
       });
@@ -904,9 +997,12 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
           adapterId: result.spec.adapterId,
           phase: "plan",
           activeLane: "planner",
+          activeRole: "case_planner",
+          activeRoleLabel: roleLabel("case_planner"),
           activeTaskId: "lane:planner:main",
           activeTaskTitle: "Planner found no next work",
           activeSubagentCount: 0,
+          executionTelemetryCount: 0,
           caseId: null,
           title: null,
           threadId: null,
@@ -914,6 +1010,7 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
           updatedAt: nowIso(),
           latestSummary: pendingPreview.summary ?? `Completed ${completedCycles} cycle(s). No ready work remains for ${result.spec.targetId}.`,
           latestCheckpoint: null,
+          latestFailureEnvelope: null,
           stdoutLog: logs.stdoutLog,
           stderrLog: logs.stderrLog,
         });
@@ -955,6 +1052,10 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
           latestSummary: message,
           startedAt: workerStartedAt,
         };
+    const failedRole = resolveWorkerRole(
+      board?.activeRole,
+      board?.activeLane ?? (effectiveLiveState.phase === "handoff" ? "handoff" : null),
+    );
     await backend.write({
       state: "failed",
       workerPid: null,
@@ -963,9 +1064,12 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
       adapterId: spec.adapterId,
       phase: effectiveLiveState.phase,
       activeLane: board?.activeLane ?? null,
+      activeRole: failedRole,
+      activeRoleLabel: roleLabel(failedRole),
       activeTaskId: board?.activeNodeId ?? null,
       activeTaskTitle: board?.tasks.find((task) => task.id === board.activeNodeId)?.title ?? null,
       activeSubagentCount: board?.lanes.subagents.runningTasks ?? 0,
+      executionTelemetryCount: board?.executionTelemetry.runningTasks ?? 0,
       caseId: effectiveLiveState.caseId,
       title: effectiveLiveState.title,
       threadId: effectiveLiveState.threadId,
@@ -973,6 +1077,7 @@ export async function runWorkerProcess(controlRepoRoot: string, mode: "run" | "r
       updatedAt: nowIso(),
       latestSummary: message,
       latestCheckpoint: effectiveLiveState.latestCheckpoint,
+      latestFailureEnvelope: board?.latestFailureEnvelope ?? effectiveLiveState.latestFailureEnvelope ?? null,
       stdoutLog: logs.stdoutLog,
       stderrLog: logs.stderrLog,
     });

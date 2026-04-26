@@ -1,4 +1,7 @@
 import { doctorHarness, resumeHarness, runHarness } from "../src/harness/engine";
+import { composeRoleBrief, loadProjectRoleBriefOverlay, roleLabel } from "../src/harness/roles";
+import { approveTarget, buildTargetProfileDraft, readTargetRoleBriefs, writeTargetProfileDraft } from "../src/harness/target-profile";
+import { loadTargetRegistry, resolveTargetRegistration } from "../src/harness/targets";
 import { defaultCliArgs, runManualEvaluation, type HarnessCliArgs } from "../src/harness/worker-controller";
 
 function parseArgs(argv: string[]): HarnessCliArgs {
@@ -39,6 +42,16 @@ function parseArgs(argv: string[]): HarnessCliArgs {
     }
     if (current === "--task" && next) {
       parsed.task = next;
+      index += 1;
+      continue;
+    }
+    if (current === "--repo" && next) {
+      parsed.repo = next;
+      index += 1;
+      continue;
+    }
+    if (current === "--label" && next) {
+      parsed.label = next;
       index += 1;
     }
   }
@@ -122,8 +135,71 @@ async function main() {
       }
       return;
     }
+    case "target:profile": {
+      if (!args.repo) {
+        throw new Error("Usage: pnpm harness:target:profile -- --repo <path> [--target <id>] [--label <label>]");
+      }
+      const draft = await buildTargetProfileDraft(controlRepoRoot, {
+        repoPath: args.repo,
+        targetId: args.target,
+        label: args.label,
+      });
+      const target = await writeTargetProfileDraft(controlRepoRoot, draft, args.targetsFile);
+      console.log(`Target draft generated: ${target.id}`);
+      console.log(`Approval state: ${target.approvalState}`);
+      console.log(`Config: ${target.adapterConfigPath}`);
+      console.log(`Role briefs: ${target.roleBriefsPath ?? "n/a"}`);
+      return;
+    }
+    case "target:approve": {
+      if (!args.target) {
+        throw new Error("Usage: pnpm harness:target:approve -- --target <target-id>");
+      }
+      const target = await approveTarget(controlRepoRoot, args.target, args.targetsFile);
+      console.log(`Target approved: ${target.id}`);
+      console.log(`Approval state: ${target.approvalState}`);
+      return;
+    }
+    case "target:briefs": {
+      if (!args.target) {
+        throw new Error("Usage: pnpm harness:target:briefs -- --target <target-id>");
+      }
+      const { target, overlay } = await readTargetRoleBriefs(controlRepoRoot, args.target, args.targetsFile);
+      const registry = await loadTargetRegistry(controlRepoRoot, args.targetsFile);
+      const resolved = resolveTargetRegistration(controlRepoRoot, registry, target.id);
+      console.log(`Target: ${resolved.id}`);
+      console.log(`Approval state: ${resolved.approvalState}`);
+      console.log(`Role briefs path: ${resolved.roleBriefsPath}`);
+      for (const kind of [
+        "supervisor",
+        "strategy_planner",
+        "milestone_planner",
+        "case_planner",
+        "strategy_evaluator",
+        "milestone_evaluator",
+        "executor",
+        "runtime_operator",
+        "environment_remediator",
+        "case_evaluator",
+        "handoff_recorder",
+        "state_reconciler",
+      ] as const) {
+        const composed = composeRoleBrief(kind, overlay);
+        console.log(`\n[${roleLabel(kind)}]`);
+        console.log(`Mission: ${composed.mission}`);
+        console.log(`Known roles: ${composed.knownRoles.map((item) => roleLabel(item)).join(", ") || "none"}`);
+        console.log(`Allowed handoffs: ${composed.allowedHandoffs.map((item) => roleLabel(item)).join(", ") || "none"}`);
+        if (composed.projectBias.directionBias.length > 0) {
+          console.log(`Direction bias: ${composed.projectBias.directionBias.join(" | ")}`);
+        }
+        if (composed.projectBias.techBias.length > 0) {
+          console.log(`Tech bias: ${composed.projectBias.techBias.join(" | ")}`);
+        }
+      }
+      return;
+    }
     default:
-      throw new Error(`Unknown harness command "${command}". Expected run, resume, eval, or doctor.`);
+      throw new Error(`Unknown harness command "${command}". Expected run, resume, eval, doctor, target:profile, target:approve, or target:briefs.`);
   }
 }
 

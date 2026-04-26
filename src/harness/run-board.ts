@@ -1,9 +1,12 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
+import { failureEnvelopeFromExecutionSummary, inferPlanningRole, loadBaseRoleBrief, roleGroup, roleLabel, rolePermissions } from "./roles";
 import { nowIso } from "./time";
 import type {
   HarnessArtifactStore,
+  HarnessExecutionTelemetrySummary,
+  HarnessFailureEnvelope,
   HarnessLaneBoard,
   HarnessLaneId,
   HarnessNodeStatus,
@@ -11,6 +14,8 @@ import type {
   HarnessRunBoard,
   HarnessRunEvent,
   HarnessRunEventKind,
+  HarnessRoleInstance,
+  HarnessRoleKind,
   HarnessRunSpec,
   HarnessTaskNode,
 } from "./types";
@@ -22,7 +27,7 @@ const LANE_LABELS: Record<HarnessLaneId, string> = {
   executor: "Executor",
   evaluator: "Evaluator",
   handoff: "Handoff",
-  subagents: "Subagents",
+  subagents: "Execution Activity",
 };
 
 function phaseLane(phase: HarnessPhase | null): HarnessLaneId | null {
@@ -65,8 +70,10 @@ export function createEmptyRunBoard(spec: HarnessRunSpec): HarnessRunBoard {
     targetId: spec.targetId,
     phase: null,
     activeLane: null,
+    activeRole: null,
     activeNodeId: null,
     latestSummary: null,
+    latestFailureEnvelope: null,
     updatedAt: nowIso(),
     lanes: {
       planner: emptyLane("planner"),
@@ -74,6 +81,15 @@ export function createEmptyRunBoard(spec: HarnessRunSpec): HarnessRunBoard {
       evaluator: emptyLane("evaluator"),
       handoff: emptyLane("handoff"),
       subagents: emptyLane("subagents"),
+    },
+    roleInstances: [],
+    executionTelemetry: {
+      label: "Execution Activity",
+      totalTasks: 0,
+      runningTasks: 0,
+      completedTasks: 0,
+      failedTasks: 0,
+      taskIds: [],
     },
     tasks: [],
   };
@@ -416,6 +432,265 @@ function isTerminalSubagentFailure(task: HarnessTaskNode) {
     && (task.kind === "error" || task.id === "turn:current");
 }
 
+function telemetrySummary(tasks: HarnessTaskNode[]): HarnessExecutionTelemetrySummary {
+  const telemetryTasks = sortTasks(tasks.filter((task) => task.lane === "subagents"));
+  return {
+    label: "Execution Activity",
+    totalTasks: telemetryTasks.length,
+    runningTasks: telemetryTasks.filter((task) => task.status === "running").length,
+    completedTasks: telemetryTasks.filter((task) => task.status === "completed").length,
+    failedTasks: telemetryTasks.filter((task) => task.status === "failed").length,
+    taskIds: telemetryTasks.map((task) => task.id),
+  };
+}
+
+function laneStateForRole(lanes: HarnessRunBoard["lanes"], laneIds: HarnessLaneId[]): HarnessNodeStatus | "idle" {
+  const selected = laneIds.map((laneId) => lanes[laneId].status);
+  if (selected.includes("running")) {
+    return "running";
+  }
+  if (selected.includes("failed")) {
+    return "failed";
+  }
+  if (selected.some((status) => status === "completed")) {
+    return selected.every((status) => status === "completed" || status === "idle") ? "completed" : "pending";
+  }
+  if (selected.some((status) => status === "pending" || status === "interrupted")) {
+    return "pending";
+  }
+  return "idle";
+}
+
+function upsertRoleInstance(
+  roleMap: Map<string, HarnessRoleInstance>,
+  input: Omit<HarnessRoleInstance, "label" | "group" | "permissions">,
+) {
+  const baseBrief = loadBaseRoleBrief(input.kind);
+  roleMap.set(input.id, {
+    ...input,
+    label: roleLabel(input.kind),
+    group: roleGroup(input.kind),
+    permissions: rolePermissions(input.kind),
+    briefSource: {
+      base: `base-briefs.json#${input.kind}`,
+      project: null,
+    },
+    knownRoleKinds: baseBrief.knownRoles,
+    allowedHandoffs: baseBrief.allowedHandoffs,
+  });
+}
+
+function findStrategyId(tasks: HarnessTaskNode[]) {
+  const strategyTask = tasks.find((task) => /strategy/i.test(task.summary ?? "") || /strategy/i.test(task.title));
+  const match = strategyTask?.summary?.match(/\bSTRAT-\d+\b/i) ?? strategyTask?.title.match(/\bSTRAT-\d+\b/i);
+  return match?.[0] ?? null;
+}
+
+function findMilestoneId(tasks: HarnessTaskNode[]) {
+  const milestoneTask = tasks.find((task) => /milestone/i.test(task.summary ?? "") || /milestone/i.test(task.title));
+  const match = milestoneTask?.summary?.match(/\b[A-Z]+M-\d+\b/i) ?? milestoneTask?.title.match(/\b[A-Z]+M-\d+\b/i);
+  return match?.[0] ?? null;
+}
+
+function deriveFailureEnvelope(board: HarnessRunBoard, tasks: HarnessTaskNode[]): HarnessFailureEnvelope | null {
+  const failedEvaluation = tasks.find((task) => task.lane === "evaluator" && task.status === "failed");
+  if (failedEvaluation?.summary) {
+    const normalized = failedEvaluation.summary.toLowerCase();
+    if (normalized.includes("coverage")) {
+      return {
+        ownerRole: "case_evaluator",
+        escalateToRole: "case_evaluator",
+        suggestedRecoveryRole: "executor",
+        failureClass: "quality_gate_failure",
+        failureScope: "coverage",
+        retryable: true,
+        blocking: true,
+        normalizedSummary: failedEvaluation.summary,
+      };
+    }
+    if (normalized.includes("functional verification failed") || normalized.includes("assert") || normalized.includes("test")) {
+      return {
+        ownerRole: "case_evaluator",
+        escalateToRole: "case_evaluator",
+        suggestedRecoveryRole: "executor",
+        failureClass: "functional_failure",
+        failureScope: "test",
+        retryable: true,
+        blocking: true,
+        normalizedSummary: failedEvaluation.summary,
+      };
+    }
+    if (normalized.includes("command invocation") || normalized.includes("maven command shape")) {
+      return {
+        ownerRole: "case_evaluator",
+        escalateToRole: "environment_remediator",
+        suggestedRecoveryRole: "environment_remediator",
+        failureClass: "command_error",
+        failureScope: "invocation",
+        retryable: false,
+        blocking: true,
+        normalizedSummary: failedEvaluation.summary,
+      };
+    }
+  }
+
+  const failedExecution = tasks.find((task) => task.lane === "executor" && task.status === "failed");
+  if (failedExecution?.summary) {
+    return failureEnvelopeFromExecutionSummary(failedExecution.summary);
+  }
+
+  const failedActivity = tasks.find((task) => task.lane === "subagents" && task.status === "failed");
+  if (failedActivity?.summary) {
+    return failureEnvelopeFromExecutionSummary(failedActivity.summary);
+  }
+
+  const boardSummaryFailure = board.latestSummary ? failureEnvelopeFromExecutionSummary(board.latestSummary) : null;
+  return boardSummaryFailure;
+}
+
+function deriveRoleInstances(board: HarnessRunBoard, tasks: HarnessTaskNode[], spec: HarnessRunSpec) {
+  const roleMap = new Map<string, HarnessRoleInstance>();
+  const planningTask = tasks.find((task) => task.lane === "planner") ?? null;
+  const evaluatorTask = tasks.find((task) => task.lane === "evaluator") ?? null;
+  const handoffTask = tasks.find((task) => task.lane === "handoff") ?? null;
+  const executorTask = tasks.find((task) => task.lane === "executor") ?? null;
+  const failureEnvelope = deriveFailureEnvelope(board, tasks);
+  const strategyId = findStrategyId(tasks);
+  const milestoneId = findMilestoneId(tasks);
+
+  const supervisorState = board.latestFailureEnvelope || failureEnvelope
+    ? "failed"
+    : laneStateForRole(board.lanes, ["planner", "executor", "evaluator", "handoff"]);
+  upsertRoleInstance(roleMap, {
+    id: "role:supervisor",
+    kind: "supervisor",
+    parentRoleId: null,
+    state: supervisorState,
+    runId: spec.runId,
+    targetId: spec.targetId,
+    caseId: null,
+    strategyId,
+    milestoneId,
+    startedAt: tasks[0]?.startedAt ?? null,
+    finishedAt: supervisorState === "completed" || supervisorState === "failed" ? board.updatedAt : null,
+    summary: board.latestSummary,
+  });
+
+  const planningState = laneStateForRole(board.lanes, ["planner"]);
+  upsertRoleInstance(roleMap, {
+    id: "role:planning",
+    kind: inferPlanningRole(planningTask, board.latestSummary),
+    parentRoleId: "role:supervisor",
+    state: planningState,
+    runId: spec.runId,
+    targetId: spec.targetId,
+    caseId: null,
+    strategyId,
+    milestoneId,
+    startedAt: planningTask?.startedAt ?? null,
+    finishedAt: planningTask?.finishedAt ?? null,
+    summary: planningTask?.summary ?? board.latestSummary,
+  });
+
+  const executionState = laneStateForRole(board.lanes, ["executor"]);
+  upsertRoleInstance(roleMap, {
+    id: "role:executor",
+    kind: "executor",
+    parentRoleId: "role:supervisor",
+    state: executionState,
+    runId: spec.runId,
+    targetId: spec.targetId,
+    caseId: executorTask?.summary?.match(/\b[A-Z]+-\d+\b/)?.[0] ?? null,
+    strategyId,
+    milestoneId,
+    startedAt: executorTask?.startedAt ?? null,
+    finishedAt: executorTask?.finishedAt ?? null,
+    summary: executorTask?.summary ?? null,
+  });
+
+  const assuranceState = laneStateForRole(board.lanes, ["evaluator", "handoff"]);
+  upsertRoleInstance(roleMap, {
+    id: "role:case-evaluator",
+    kind: "case_evaluator",
+    parentRoleId: "role:supervisor",
+    state: laneStateForRole(board.lanes, ["evaluator"]),
+    runId: spec.runId,
+    targetId: spec.targetId,
+    caseId: null,
+    strategyId,
+    milestoneId,
+    startedAt: evaluatorTask?.startedAt ?? null,
+    finishedAt: evaluatorTask?.finishedAt ?? null,
+    summary: evaluatorTask?.summary ?? null,
+  });
+  upsertRoleInstance(roleMap, {
+    id: "role:handoff-recorder",
+    kind: "handoff_recorder",
+    parentRoleId: "role:supervisor",
+    state: laneStateForRole(board.lanes, ["handoff"]),
+    runId: spec.runId,
+    targetId: spec.targetId,
+    caseId: null,
+    strategyId,
+    milestoneId,
+    startedAt: handoffTask?.startedAt ?? null,
+    finishedAt: handoffTask?.finishedAt ?? null,
+    summary: handoffTask?.summary ?? null,
+  });
+  upsertRoleInstance(roleMap, {
+    id: "role:state-reconciler",
+    kind: "state_reconciler",
+    parentRoleId: "role:supervisor",
+    state: assuranceState === "failed" ? "running" : assuranceState,
+    runId: spec.runId,
+    targetId: spec.targetId,
+    caseId: null,
+    strategyId,
+    milestoneId,
+    startedAt: handoffTask?.startedAt ?? evaluatorTask?.startedAt ?? null,
+    finishedAt: assuranceState === "completed" ? board.updatedAt : null,
+    summary: assuranceState === "failed"
+      ? "Waiting for reconciliation after a failed evaluation or handoff."
+      : "Maintaining checkpoints, artifacts, and board state.",
+  });
+
+  if (failureEnvelope?.escalateToRole === "runtime_operator" || failureEnvelope?.suggestedRecoveryRole === "runtime_operator") {
+    upsertRoleInstance(roleMap, {
+      id: "role:runtime-operator",
+      kind: "runtime_operator",
+      parentRoleId: "role:supervisor",
+      state: "running",
+      runId: spec.runId,
+      targetId: spec.targetId,
+      caseId: null,
+      strategyId,
+      milestoneId,
+      startedAt: board.updatedAt,
+      finishedAt: null,
+      summary: failureEnvelope.normalizedSummary,
+    });
+  }
+
+  if (failureEnvelope?.escalateToRole === "environment_remediator" || failureEnvelope?.suggestedRecoveryRole === "environment_remediator") {
+    upsertRoleInstance(roleMap, {
+      id: "role:environment-remediator",
+      kind: "environment_remediator",
+      parentRoleId: "role:supervisor",
+      state: "running",
+      runId: spec.runId,
+      targetId: spec.targetId,
+      caseId: null,
+      strategyId,
+      milestoneId,
+      startedAt: board.updatedAt,
+      finishedAt: null,
+      summary: failureEnvelope.normalizedSummary,
+    });
+  }
+
+  return [...roleMap.values()];
+}
+
 function finalizeBoard(board: HarnessRunBoard) {
   const taskMap = new Map(board.tasks.map((task) => [task.id, task]));
   for (const task of taskMap.values()) {
@@ -488,7 +763,6 @@ function finalizeBoard(board: HarnessRunBoard) {
     };
   }
 
-  const orderedTasks = sortTasks([...taskMap.values()]);
   const preferredLane = phaseLane(board.phase);
   const activeLane = (preferredLane && lanes[preferredLane].status !== "idle"
     ? preferredLane
@@ -498,13 +772,58 @@ function finalizeBoard(board: HarnessRunBoard) {
     ?? board.activeLane
     ?? null;
   const activeNodeId = activeLane ? lanes[activeLane].activeTaskId : null;
+  const orderedTasks = sortTasks([...taskMap.values()]);
+  const executionTelemetry = telemetrySummary(orderedTasks);
 
-  return {
+  const nextBoard = {
     ...board,
     activeLane,
     activeNodeId,
     lanes,
     tasks: orderedTasks,
+  };
+  const latestFailureEnvelope = deriveFailureEnvelope(nextBoard, orderedTasks);
+  const roleInstances = deriveRoleInstances({
+    ...nextBoard,
+    latestFailureEnvelope,
+  }, orderedTasks, {
+    runId: board.runId,
+    targetId: board.targetId,
+    adapterId: "",
+    artifactRoot: "",
+    manifestPath: "",
+    targetRegistryPath: "",
+    controlRepoRoot: "",
+    targetRepoRoot: "",
+    model: null,
+    taskId: null,
+  });
+  const activeRole = (() => {
+    if (latestFailureEnvelope?.suggestedRecoveryRole) {
+      return latestFailureEnvelope.suggestedRecoveryRole;
+    }
+    if (activeLane === "planner") {
+      return roleInstances.find((role) => role.group === "planning" && role.state !== "idle")?.kind ?? "case_planner";
+    }
+    if (activeLane === "executor" || activeLane === "subagents") {
+      return "executor";
+    }
+    if (activeLane === "evaluator") {
+      return "case_evaluator";
+    }
+    if (activeLane === "handoff") {
+      return "handoff_recorder";
+    }
+    return roleInstances.find((role) => role.kind === "supervisor")?.kind ?? null;
+  })();
+
+  return {
+    ...nextBoard,
+    activeRole,
+    latestFailureEnvelope,
+    roleInstances,
+    executionTelemetry,
+    activeLane,
   };
 }
 

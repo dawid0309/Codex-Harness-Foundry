@@ -8,10 +8,11 @@ import { createExternalTargetAdapter } from "./external-target";
 import { createFoundryAdapter } from "./foundry-adapter";
 import { createLangfuseLiveRunObserver, scoreHarnessEvaluation, type LangfuseLiveRunObserver } from "./langfuse-observability";
 import { loadHarnessManifest, resolveAdapterManifest } from "./manifest";
+import { failureEnvelopeFromEvaluation, failureEnvelopeFromExecutionSummary } from "./roles";
 import { appendRunEventAndRebuild, createEmptyRunBoard, createLifecycleEvent, normalizeCodexEvent, readRunBoard, readRunEvents } from "./run-board";
 import { JsonStateBackend, writeCheckpoint } from "./state-backend";
 import { createRunId, nowIso } from "./time";
-import { createRunSpec, resolveTargetForSpec } from "./targets";
+import { assertTargetApproved, createRunSpec, resolveTargetForSpec } from "./targets";
 import type {
   HarnessCompletionUpdate,
   EvaluationResult,
@@ -155,6 +156,7 @@ async function updateLiveState(
     failureReason?: string | null;
     checkpointPath?: string | null;
     startedAt?: string | null;
+    latestFailureEnvelope?: HarnessLiveState["latestFailureEnvelope"];
   } = {},
 ) {
   const hasThreadId = Object.prototype.hasOwnProperty.call(options, "threadId");
@@ -162,6 +164,7 @@ async function updateLiveState(
   const hasFailureReason = Object.prototype.hasOwnProperty.call(options, "failureReason");
   const hasCheckpointPath = Object.prototype.hasOwnProperty.call(options, "checkpointPath");
   const hasStartedAt = Object.prototype.hasOwnProperty.call(options, "startedAt");
+  const hasLatestFailureEnvelope = Object.prototype.hasOwnProperty.call(options, "latestFailureEnvelope");
   const hasPhase = Object.prototype.hasOwnProperty.call(options, "phase");
   const hasCaseId = Object.prototype.hasOwnProperty.call(options, "caseId");
   const hasTitle = Object.prototype.hasOwnProperty.call(options, "title");
@@ -180,6 +183,7 @@ async function updateLiveState(
     latestCheckpoint: hasCheckpointPath ? options.checkpointPath ?? null : current.latestCheckpoint,
     latestSummary: hasSummary ? options.summary ?? null : current.latestSummary,
     failureReason: hasFailureReason ? options.failureReason ?? null : current.failureReason,
+    latestFailureEnvelope: hasLatestFailureEnvelope ? options.latestFailureEnvelope ?? null : current.latestFailureEnvelope ?? null,
     updatedAt: nowIso(),
   }));
 }
@@ -456,6 +460,15 @@ async function finalizeRunArtifacts(input: {
       ? `${input.resume ? "Resumed run completed" : "Completed"} ${input.contract.caseId}.`
       : input.evaluation.failureReason ?? `Evaluation failed for ${input.contract.caseId}.`,
     failureReason: input.evaluation.failureReason,
+    latestFailureEnvelope: input.evaluation.passed
+      ? null
+      : failureEnvelopeFromEvaluation({
+          failureClass: input.evaluation.failureClass,
+          failureScope: input.evaluation.failureScope,
+          retryable: input.evaluation.retryable,
+          blocking: input.evaluation.blocking,
+          normalizedSummary: input.evaluation.normalizedSummary,
+        }),
     checkpointPath: relativeToControlRepo(input.spec, handoffCheckpoint),
   });
   return finalExecution;
@@ -592,7 +605,7 @@ export async function runHarness(input: {
   model?: string | null;
   taskId?: string | null;
 }) {
-  const { spec, target } = await createRunSpec({
+  const { spec, target: targetRegistration } = await createRunSpec({
     controlRepoRoot: input.controlRepoRoot,
     manifestPath: input.manifestPath,
     targetRegistryPath: input.targetRegistryPath,
@@ -602,13 +615,14 @@ export async function runHarness(input: {
     model: input.model ?? null,
     taskId: input.taskId ?? null,
   });
+  assertTargetApproved(targetRegistration, "run");
 
   const stateBackend = new JsonStateBackend(spec);
   const context = await buildContext(spec);
   const targetAdapter = createTarget(context);
   const recorder = new RunEventRecorder(spec, context.artifactStore);
   await context.artifactStore.writeJson("run-spec.json", spec);
-  await context.artifactStore.writeJson("target-registration.json", target);
+  await context.artifactStore.writeJson("target-registration.json", targetRegistration);
   await recorder.initialize({ reset: true });
   await updateLiveState(stateBackend, spec, "planning", {
     phase: "plan",
@@ -666,6 +680,7 @@ export async function runHarness(input: {
       threadId: null,
       summary: `Executing ${contract.caseId}.`,
       failureReason: null,
+      latestFailureEnvelope: null,
     });
     await recorder.recordLifecycle({
       phase: "execute",
@@ -709,6 +724,7 @@ export async function runHarness(input: {
       title: contract.title,
       threadId: execution.threadId,
       summary: `Evaluating ${contract.caseId}.`,
+      latestFailureEnvelope: null,
     });
     await recorder.recordLifecycle({
       phase: "evaluate",
@@ -778,6 +794,17 @@ export async function runHarness(input: {
       threadId: execution?.threadId ?? null,
       summary: message,
       failureReason: message,
+      latestFailureEnvelope: execution && !evaluation
+        ? failureEnvelopeFromExecutionSummary(message)
+        : evaluation
+          ? failureEnvelopeFromEvaluation({
+              failureClass: evaluation.failureClass,
+              failureScope: evaluation.failureScope,
+              retryable: evaluation.retryable,
+              blocking: evaluation.blocking,
+              normalizedSummary: evaluation.normalizedSummary,
+            })
+          : null,
       checkpointPath: existsSync(checkpointAbsolute) ? relativeToControlRepo(spec, checkpointAbsolute) : null,
     });
     throw error;
@@ -793,7 +820,7 @@ export async function resumeHarness(input: {
   adapterId?: string | null;
   model?: string | null;
 }) {
-  const { spec } = await createRunSpec({
+  const { spec, target: targetRegistration } = await createRunSpec({
     controlRepoRoot: input.controlRepoRoot,
     manifestPath: input.manifestPath,
     targetRegistryPath: input.targetRegistryPath,
@@ -803,9 +830,10 @@ export async function resumeHarness(input: {
     model: input.model ?? null,
     taskId: null,
   });
+  assertTargetApproved(targetRegistration, "resume");
 
   const context = await buildContext(spec);
-  const target = createTarget(context);
+  const targetAdapter = createTarget(context);
   const stateBackend = new JsonStateBackend(spec);
   const contract = await context.artifactStore.readJson<SprintContract>("contract.json");
   const checkpoint = await context.artifactStore.readJson<HarnessCheckpoint>("checkpoint.json");
@@ -815,7 +843,7 @@ export async function resumeHarness(input: {
   const reconciled = await reconcileRunArtifacts({
     spec,
     context,
-    targetAdapter: target,
+    targetAdapter: targetAdapter,
     stateBackend,
     recorder,
     contract,
@@ -841,6 +869,7 @@ export async function resumeHarness(input: {
     threadId: checkpoint.threadId,
     summary: `Resuming ${contract.caseId}.`,
     failureReason: null,
+    latestFailureEnvelope: null,
   });
   await recorder.recordLifecycle({
     phase: "execute",
@@ -850,7 +879,7 @@ export async function resumeHarness(input: {
     summary: `Resuming ${contract.caseId}.`,
   });
 
-  const execution = await target.execute({
+  const execution = await targetAdapter.execute({
     ...context,
     contract,
     threadId: checkpoint.threadId,
@@ -885,6 +914,7 @@ export async function resumeHarness(input: {
       threadId: execution.threadId,
       summary: message,
       failureReason: message,
+      latestFailureEnvelope: failureEnvelopeFromExecutionSummary(message),
       checkpointPath: relativeToControlRepo(spec, context.artifactStore.resolve("checkpoint.json")),
     });
     throw new Error(message);
@@ -896,6 +926,7 @@ export async function resumeHarness(input: {
     title: contract.title,
     threadId: execution.threadId,
     summary: `Evaluating resumed run ${contract.caseId}.`,
+    latestFailureEnvelope: null,
   });
   await recorder.recordLifecycle({
     phase: "execute",
@@ -911,12 +942,12 @@ export async function resumeHarness(input: {
     title: `Evaluating resumed run ${contract.caseId}`,
     summary: `Evaluating resumed run ${contract.caseId}.`,
   });
-  const evaluation = await target.evaluate({ ...context, contract, execution });
+  const evaluation = await targetAdapter.evaluate({ ...context, contract, execution });
   const evaluationFile = await context.artifactStore.writeJson("evaluation.resume.json", evaluation);
   await scoreHarnessEvaluation(spec, context.artifactStore, evaluation);
   let completion: HarnessCompletionUpdate | null = null;
-  if (evaluation.passed && target.completeWork) {
-    completion = await target.completeWork({ ...context, contract, execution, evaluation });
+  if (evaluation.passed && targetAdapter.completeWork) {
+    completion = await targetAdapter.completeWork({ ...context, contract, execution, evaluation });
     if (completion) {
       await context.artifactStore.writeJson("completion.resume.json", completion);
     }
@@ -1061,6 +1092,15 @@ export async function evaluateHarness(input: {
       ? `Manual evaluation passed for ${contract.caseId}.`
       : evaluation.failureReason ?? `Manual evaluation failed for ${contract.caseId}.`,
     failureReason: evaluation.failureReason,
+    latestFailureEnvelope: evaluation.passed
+      ? null
+      : failureEnvelopeFromEvaluation({
+          failureClass: evaluation.failureClass,
+          failureScope: evaluation.failureScope,
+          retryable: evaluation.retryable,
+          blocking: evaluation.blocking,
+          normalizedSummary: evaluation.normalizedSummary,
+        }),
     checkpointPath: relativeToControlRepo(spec, evaluationFile),
   });
   return { spec, contract, execution, evaluation, statePath: stateBackend.path() };
@@ -1104,7 +1144,7 @@ export async function peekNextHarnessWork(input: {
   model?: string | null;
   taskId?: string | null;
 }): Promise<{ spec: HarnessRunSpec; item: HarnessReadyWorkItem | null; summary: string | null }> {
-  const { spec } = await createRunSpec({
+  const { spec, target: targetRegistration } = await createRunSpec({
     controlRepoRoot: input.controlRepoRoot,
     manifestPath: input.manifestPath,
     targetRegistryPath: input.targetRegistryPath,
@@ -1114,12 +1154,13 @@ export async function peekNextHarnessWork(input: {
     model: input.model ?? null,
     taskId: input.taskId ?? null,
   });
+  assertTargetApproved(targetRegistration, "plan or execute work for");
 
   const context = await buildContext(spec);
-  const target = createTarget(context);
+  const targetAdapter = createTarget(context);
 
-  if (target.peekReadyWork) {
-    const item = await target.peekReadyWork(context);
+  if (targetAdapter.peekReadyWork) {
+    const item = await targetAdapter.peekReadyWork(context);
     const publishResult = await context.artifactStore
       .readJson<{ summary?: string | null }>("planner/publish-result.json")
       .catch(() => null);
@@ -1131,7 +1172,7 @@ export async function peekNextHarnessWork(input: {
   }
 
   try {
-    const contract = await target.plan(context);
+    const contract = await targetAdapter.plan(context);
     return {
       spec,
       item: {

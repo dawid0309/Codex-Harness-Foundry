@@ -13,6 +13,29 @@ export type HarnessPhase = "plan" | "execute" | "evaluate" | "handoff";
 
 export type HarnessLaneId = "planner" | "executor" | "evaluator" | "handoff" | "subagents";
 
+export type HarnessRoleKind =
+  | "supervisor"
+  | "strategy_planner"
+  | "milestone_planner"
+  | "case_planner"
+  | "strategy_evaluator"
+  | "milestone_evaluator"
+  | "executor"
+  | "runtime_operator"
+  | "environment_remediator"
+  | "case_evaluator"
+  | "handoff_recorder"
+  | "state_reconciler";
+
+export type HarnessRoleGroup =
+  | "supervisor"
+  | "planning"
+  | "execution"
+  | "env_ops"
+  | "assurance";
+
+export type HarnessTargetApprovalState = "draft" | "pending_approval" | "approved";
+
 export type HarnessNodeStatus = "pending" | "running" | "completed" | "failed" | "interrupted";
 
 export type HarnessPlanStepStatus = "pending" | "running" | "completed" | "failed";
@@ -164,6 +187,7 @@ export type HarnessLiveState = {
   latestCheckpoint: string | null;
   latestSummary: string | null;
   failureReason: string | null;
+  latestFailureEnvelope?: HarnessFailureEnvelope | null;
 };
 
 export type HarnessWorkerState =
@@ -182,9 +206,12 @@ export type HarnessWorkerStatus = {
   adapterId: string | null;
   phase: HarnessPhase | null;
   activeLane: HarnessLaneId | null;
+  activeRole: HarnessRoleKind | null;
+  activeRoleLabel: string | null;
   activeTaskId: string | null;
   activeTaskTitle: string | null;
   activeSubagentCount: number;
+  executionTelemetryCount: number;
   caseId: string | null;
   title: string | null;
   threadId: string | null;
@@ -192,6 +219,7 @@ export type HarnessWorkerStatus = {
   updatedAt: string;
   latestSummary: string | null;
   latestCheckpoint: string | null;
+  latestFailureEnvelope: HarnessFailureEnvelope | null;
   stdoutLog: string;
   stderrLog: string;
 };
@@ -242,15 +270,168 @@ export type HarnessLaneBoard = {
   taskIds: string[];
 };
 
+export type HarnessRolePermission = {
+  canSpawn: boolean;
+  canStop: boolean;
+  canDirect: boolean;
+  allowedChildren: HarnessRoleKind[];
+};
+
+export type HarnessBaseRoleBrief = {
+  kind: HarnessRoleKind;
+  mission: string;
+  responsibilities: string[];
+  nonGoals: string[];
+  allowedInputs: string[];
+  forbiddenInputs: string[];
+  allowedOutputs: string[];
+  knownRoles: HarnessRoleKind[];
+  allowedHandoffs: HarnessRoleKind[];
+  escalationRules: string[];
+  successDefinition: string[];
+};
+
+export type HarnessProjectRoleBriefOverlayEntry = {
+  directionBias?: string[];
+  techBias?: string[];
+  repoFacts?: string[];
+  projectConstraints?: string[];
+  preferredChecks?: string[];
+  environmentHotspots?: string[];
+  knownRoles?: HarnessRoleKind[];
+  allowedHandoffs?: HarnessRoleKind[];
+  escalationRules?: string[];
+  successDefinition?: string[];
+};
+
+export type HarnessProjectRoleBriefOverlay = {
+  targetId: string;
+  generatedAt: string;
+  updatedAt: string;
+  generatedBy: "harness_profiler" | "operator" | "migration";
+  directionBias?: string[];
+  techBias?: string[];
+  repoFacts: {
+    primaryLanguages: string[];
+    buildSystems: string[];
+    testEntrypoints: string[];
+    docsSummary: string[];
+  };
+  projectConstraints: string[];
+  preferredChecks?: string[];
+  environmentHotspots?: string[];
+  roleOverrides: Partial<Record<HarnessRoleKind, HarnessProjectRoleBriefOverlayEntry>>;
+};
+
+export type HarnessComposedRoleBrief = {
+  kind: HarnessRoleKind;
+  mission: string;
+  responsibilities: string[];
+  nonGoals: string[];
+  allowedInputs: string[];
+  forbiddenInputs: string[];
+  allowedOutputs: string[];
+  knownRoles: HarnessRoleKind[];
+  allowedHandoffs: HarnessRoleKind[];
+  escalationRules: string[];
+  successDefinition: string[];
+  briefSource: {
+    base: string;
+    project: string | null;
+  };
+  projectBias: {
+    directionBias: string[];
+    techBias: string[];
+    repoFacts: string[];
+    projectConstraints: string[];
+    preferredChecks: string[];
+    environmentHotspots: string[];
+  };
+};
+
+export type HarnessRoleContextPacket = {
+  role: {
+    kind: HarnessRoleKind;
+    label: string;
+    group: HarnessRoleGroup;
+  };
+  brief: HarnessComposedRoleBrief;
+  visibleContext: {
+    contractSummary?: string | null;
+    strategySummary?: string | null;
+    milestoneSummary?: string | null;
+    latestEvaluationSummary?: string | null;
+    latestFailureEnvelope?: HarnessFailureEnvelope | null;
+    latestCheckpoint?: string | null;
+    repoFacts?: string[];
+    doctorSummary?: string[];
+    runtimeSummary?: string[];
+  };
+};
+
+export type HarnessTargetProfileDraft = {
+  registration: HarnessTargetRegistration;
+  targetConfig: ExternalTargetConfig;
+  roleBriefs: HarnessProjectRoleBriefOverlay;
+};
+
+export type HarnessRoleInstance = {
+  id: string;
+  kind: HarnessRoleKind;
+  group: HarnessRoleGroup;
+  label: string;
+  parentRoleId: string | null;
+  state: HarnessNodeStatus | "idle";
+  runId: string;
+  targetId: string;
+  caseId: string | null;
+  strategyId: string | null;
+  milestoneId: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  summary: string | null;
+  permissions: HarnessRolePermission;
+  briefSource?: {
+    base: string;
+    project: string | null;
+  };
+  knownRoleKinds?: HarnessRoleKind[];
+  allowedHandoffs?: HarnessRoleKind[];
+};
+
+export type HarnessExecutionTelemetrySummary = {
+  label: string;
+  totalTasks: number;
+  runningTasks: number;
+  completedTasks: number;
+  failedTasks: number;
+  taskIds: string[];
+};
+
+export type HarnessFailureEnvelope = {
+  ownerRole: HarnessRoleKind;
+  escalateToRole: HarnessRoleKind | null;
+  suggestedRecoveryRole: HarnessRoleKind | null;
+  failureClass: EvaluationFailureClass | "execution_runtime_failure" | "execution_environment_failure" | "unknown";
+  failureScope: EvaluationFailureScope | "runtime" | "environment" | "unknown";
+  retryable: boolean;
+  blocking: boolean;
+  normalizedSummary: string;
+};
+
 export type HarnessRunBoard = {
   runId: string;
   targetId: string;
   phase: HarnessPhase | null;
   activeLane: HarnessLaneId | null;
+  activeRole: HarnessRoleKind | null;
   activeNodeId: string | null;
   latestSummary: string | null;
+  latestFailureEnvelope: HarnessFailureEnvelope | null;
   updatedAt: string;
   lanes: Record<HarnessLaneId, HarnessLaneBoard>;
+  roleInstances: HarnessRoleInstance[];
+  executionTelemetry: HarnessExecutionTelemetrySummary;
   tasks: HarnessTaskNode[];
 };
 
@@ -322,6 +503,9 @@ export type HarnessTargetRegistration = {
   adapterId: string;
   adapterConfigPath: string;
   artifactRoot: string;
+  roleBriefsPath?: string;
+  approvalState?: HarnessTargetApprovalState;
+  profileGeneratedAt?: string | null;
 };
 
 export type HarnessTargetRegistryFile = {
@@ -429,6 +613,7 @@ export type HarnessContext = {
   manifest: ProjectAdapterManifest;
   artifactStore: HarnessArtifactStore;
   selectedTaskId: string | null;
+  activeRoleContext?: HarnessRoleContextPacket | null;
   executionObserver?: {
     onThreadStarted?: (threadId: string) => Promise<void> | void;
     onCodexEvent?: (event: Record<string, unknown>) => Promise<void> | void;
@@ -728,6 +913,7 @@ export type ExternalTargetConfig = {
   label: string;
   description: string;
   casesPath: string;
+  roleBriefsPath?: string;
   directionBrief?: ExternalDirectionBrief;
   execution: {
     basePrompt: string;
